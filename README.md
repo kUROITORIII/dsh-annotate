@@ -101,12 +101,39 @@ DSH 官方对“文字手势”的限制，不是本插件的 bug：
 5. 重启 DSH（`ctrl+r` 只重载客户端，改了 `index.js` 必须重启），用**痕迹**确认真的重载了（进程启动时间晚于 `client.js` 修改时间）；
 6. 语法有变 → 改 `docs/FORMAT.md` 顶部版本号，并通知使用侧同步 `~/.dsh/skills/doc-review/SKILL.md`（那份由使用侧维护）。
 
+## 安装
+
+### 方式一：从 GitHub 装（现在就能用）
+
+把下面这段**整段交给 AI**，它照着执行即可（前提：它能运行命令、能改 `~/.dsh`）：
+
+```text
+请从 https://github.com/kUROITORIII/dsh-annotate 安装 dsh-annotate 插件：
+1. git clone 到本地任意目录（例如 ~/plugins/dsh-annotate）
+2. 打开 ~/.dsh/profiles/<当前 profile>/package.json，在 dependencies 里加一行：
+   "dsh-annotate": "link:<上一步的绝对路径>"
+3. 在该 profile 目录执行 pnpm install（会生成 node_modules/dsh-annotate 的链接）
+4. 重启 DSH（不是 Ctrl+R，要退出重开）
+5. 验证：聊天顶栏出现「批注」按钮，插件页出现 dsh-annotate 这一行
+```
+
+装好后的表现：顶栏多了「批注」和「文档」两个入口；插件页里能看到 dsh-annotate 并可进「配置」改 6 项。
+
+### 方式二：npm（尚未发布）
+
+```bash
+npm install dsh-annotate   # 暂时不可用：还没发到 npm
+```
+
+> 想让别人在**插件市场**里点一下就装，需要先 `npm publish`，再往 `dsh-plugin-catalog` 提一条目录记录；两条都做完，用户在市场里搜 `dsh-annotate` 或直接对 AI 说「装这个插件」都能成。
+
 ## 仓库结构
 
-```nclient.js / index.js      插件两半（浏览器 + 宿主）
-package.json             dsh 清单（files 白名单决定发什么）
-docs/FORMAT.md           dsh-doc 格式契约（随包发布）
-dev/                    开发过程文档：HANDOFF / NEXT / PLAN / RESEARCH（**不进包**）
+```
+client.js / index.js      插件两半（浏览器 + 宿主）
+package.json              dsh 清单（files 白名单决定发什么）
+docs/FORMAT.md            dsh-doc 格式契约（随包发布）
+dev/                      开发过程文档：HANDOFF / NEXT / PLAN / RESEARCH（不进包）
 ```
 
 ## 卸载
