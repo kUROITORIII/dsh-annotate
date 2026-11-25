@@ -90,6 +90,7 @@ export function apply(ctx, config) {
 
   registerTranscribeRoute(ctx)
   registerDocRoute(ctx, config)
+  registerClientLogRoute(ctx)
   registerDocTools(ctx, config)
 }
 
@@ -743,5 +744,39 @@ function registerDocTools(ctx, config) {
         return { summary: `已写入「${saved.title}」（现在 ${next.length} 字符），落盘于 ${saved.file}。`, text: next }
       },
     }), 'annotate: doc_append')
+  })
+}
+/**
+ * 客户端异常落盘：`POST /annotate-log { text }` → `${DSH_HOME}/annotate-client-debug.log`。
+ * 只用来排查「面板渲染不出来」这类看不见的错误，写一行 JSON，不做别的。
+ */
+function registerClientLogRoute(ctx) {
+  ctx.inject(['webServer'], (webCtx) => {
+    webCtx.effect(() => webCtx.webServer.register({
+      kind: 'prefix',
+      path: '/annotate-log',
+      handler: async (req, res) => {
+        if (req.method !== 'POST') {
+          sendJson(res, 405, { ok: false, reason: 'method-not-allowed' })
+          return
+        }
+        try {
+          const raw = await readBody(req)
+          let text = String(raw.toString('utf8'))
+          try {
+            const payload = JSON.parse(text)
+            text = JSON.stringify(payload)
+          } catch (error) {
+            /* 不是 JSON 就按纯文本写 */
+          }
+          const file = path.join(os.homedir(), '.dsh', 'annotate-client-debug.log')
+          await fs.mkdir(path.dirname(file), { recursive: true })
+          await fs.appendFile(file, text + '\n', 'utf8')
+          sendJson(res, 200, { ok: true, file })
+        } catch (error) {
+          sendJson(res, 500, { ok: false, reason: String(error !== null && error !== undefined && error.message !== undefined ? error.message : error) })
+        }
+      },
+    }), 'annotate: 客户端异常日志')
   })
 }

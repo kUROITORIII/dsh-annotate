@@ -2401,15 +2401,7 @@ window.__ModuleLoader__.load({
         title: open ? '收起对话文档' : (hasDoc ? '这轮生成了文档，点开看' : '打开对话文档'),
         'aria-pressed': open ? 'true' : 'false',
         onClick: () => {
-          try {
-            const service = runtime.ctx === null ? null : runtime.ctx.get('betterSidebar')
-            if (service !== null && service !== undefined && typeof service.openTab === 'function') {
-              service.openTab({ type: 'dsh-annotate:doc', title: '文档' })
-              return
-            }
-          } catch (error) {
-            console.warn('[annotate] 打开侧栏页签失败，退回浮窗', error)
-          }
+          /* 统一开插件自己的面板：不依赖 dsh-better-sidebar（见 openDocTab 的注释）。 */
           commit({ docOpen: !open })
         },
       }, h('span', { className: 'dsha-ico' }, '\u25A4'), h('span', null, '文档'),
@@ -4052,7 +4044,7 @@ window.__ModuleLoader__.load({
 
     const DOC_PATH = '对话文档'
     /* 文档栏上会显示它：一眼看出跑的是不是刚改的那份客户端。 */
-    const PLUGIN_VERSION = '0.105.0'
+    const PLUGIN_VERSION = '0.106.2'
 
     /** 在聊天流里找最新一份 ```dsh-doc 围栏（助手输出的文档）。 */
     function scanDocBlocks() {
@@ -5501,18 +5493,14 @@ window.__ModuleLoader__.load({
       return value === null ? 4 : value
     }
 
-    /** 把「文档」页签推到右侧栏；betterSidebar 不在就返回 false，不抛。 */
+    /** 打开文档面板：**我们自己的窗口**，不依赖任何第三方插件。
+     *  历史：这里曾经优先把文档塞进 dsh-better-sidebar 的右侧栏页签，失败才退回浮层。
+     *  问题：side-bar 重启后页签注册表是新的，旧注册丢失 → openTab 能开出没有视图的空页签
+     *  （界面只剩「这类内容还没有可用的查看方式」）。2026-11-26 起改成**单一容器**：
+     *  文档始终在插件自己的面板里开，side-bar 只在「在编辑器里打开」这种可选联动里才用到。 */
     function openDocTab() {
-      try {
-        const service = runtime.ctx === null ? null : runtime.ctx.get('betterSidebar')
-        if (service !== null && service !== undefined && typeof service.openTab === 'function') {
-          service.openTab({ type: 'dsh-annotate:doc', title: '文档' })
-          return true
-        }
-      } catch (error) {
-        /* 侧栏没装或页签类型不可用：留给用户自己点「文档」 */
-      }
-      return false
+      commit({ docOpen: true })
+      return true
     }
 
     /**
@@ -5708,15 +5696,7 @@ window.__ModuleLoader__.load({
           if (!(target instanceof Element)) return
           if (target.closest('pre[data-dsha-fold="1"]') === null) return
           event.preventDefault()
-          try {
-            const service = runtime.ctx === null ? null : runtime.ctx.get('betterSidebar')
-            if (service !== null && service !== undefined && typeof service.openTab === 'function') {
-              service.openTab({ type: 'dsh-annotate:doc', title: '文档' })
-              return
-            }
-          } catch (error) {
-            /* 退化成浮窗 */
-          }
+          /* 折叠条点开 = 打开插件自己的文档面板（不碰第三方侧栏）。 */
           commit({ docOpen: true })
         }
         document.addEventListener('click', onClick, true)
@@ -5856,7 +5836,49 @@ window.__ModuleLoader__.load({
          直接传下去：文档页签是常驻的，只靠 store.active 会拿到「上次操作批注的会话」，
          于是切到别的会话还能看见不属于它的文档。 */
       const scope = props === null || props === undefined ? undefined : props.scope
-      return h(DocPanel, { embedded: true, scope })
+      return h(DocBoundary, null, h(DocPanel, { embedded: true, scope }))
+    }
+
+    /**
+     * 文档面板的错误边界：面板一旦渲染抛错，宿主会把整个浮层判成「没在渲染」，
+     * 界面上什么都不出现（side-bar 页签那边则显示一句「这类内容还没有可用的查看方式」）。
+     * 这里把异常**写进文件**再吞掉，至少能查：
+     *   POST /annotate-log → ${DSH_HOME}/annotate-client-debug.log
+     */
+    /* 错误边界必须继承 React.Component；断言脚本里的假 React 没有它，就退化成一个空类，
+       这样纯函数测试照样能加载（真实宿主里 Component 一定在）。 */
+    const BoundaryBase = React !== null && React !== undefined && typeof React.Component === 'function'
+      ? React.Component
+      : class { constructor(props) { this.props = props } setState() {} render() { return null } }
+    class DocBoundary extends BoundaryBase {
+      constructor(props) {
+        super(props)
+        this.state = { error: '' }
+      }
+
+      static getDerivedStateFromError(error) {
+        return { error: String(error !== null && error !== undefined && error.message !== undefined ? error.message : error) }
+      }
+
+      componentDidCatch(error, info) {
+        const text = '文档面板渲染失败：'
+          + String(error !== null && error !== undefined && error.message !== undefined ? error.message : error)
+          + '｜栈：' + String(info !== null && info !== undefined && info.componentStack !== undefined ? info.componentStack : '').replace(/\s+/g, ' ').slice(0, 600)
+        try { commit({ reanchorHint: text }) } catch (warn) { /* 状态写不进去就只写日志 */ }
+        try { console.error('[annotate]', text) } catch (warn) { /* 忽略 */ }
+        try {
+          fetch('/annotate-log', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ at: new Date().toISOString(), text }),
+          }).catch(() => {})
+        } catch (warn) { /* 忽略 */ }
+      }
+
+      render() {
+        if (this.state.error !== '') return null
+        return this.props.children
+      }
     }
 
     function DocPanel(props) {
@@ -6668,8 +6690,6 @@ window.__ModuleLoader__.load({
         return out
       }, [findOpen, findText, viewing === null ? '' : viewing.key, viewBlocks, store.doc])
 
-      if (!open) return null
-
       const blocks = doc === null ? [] : doc.blocks
       /* 正在看的那份文档的标识：历史版只显示属于它的批注，最新那份只显示它的（以及没有标识的旧数据）。 */
       const activeDocKey = viewing !== null
@@ -6912,6 +6932,14 @@ window.__ModuleLoader__.load({
           return { ...entry, blockIndex: moved.blockIndex, startChar: moved.from, endChar: moved.to }
         })
       }, [marks, relocated])
+
+      /* ⚠ 早退必须在这个组件的**所有** hook 之后。
+         以前它放在上面（relocated / useRef / useEffect / placedMarks 之前），
+         面板一打开 hook 数量就比上一次多，React 抛 #310
+         （Rendered more hooks than during the previous render），
+         整个组件被宿主当成「渲染失败」吞掉 —— 界面上就是点了「文档」什么都不出现，
+         槽位里 annotate-doc 显示 active:false（2026-11-26 实机定位到）。 */
+      if (!open) return null
 
       /* 单块兜底：某一块（新语法/旧存档）渲染抛错时只显示一行提示，
          不让整块面板被 slot 边界替换成空白（0.72 就是这么整片白掉的）。 */
@@ -8018,7 +8046,7 @@ window.__ModuleLoader__.load({
           name: 'shell.overlay',
           id: 'annotate-doc',
           order: 82,
-        }, () => h(DocPanel, { wide: true })))
+        }, () => h(DocBoundary, null, h(DocPanel, { wide: true }))))
 
         ctx.slots.inject('shell.overlay', () => ctx.slots.register({
           name: 'shell.overlay',
@@ -8049,40 +8077,23 @@ window.__ModuleLoader__.load({
           }
         })
 
-        /* 客户端命令 /doctab：不经过模型，只把「文档」页签推到前面。 */
+        /* 客户端命令 /doctab：不经过模型，只打开插件自己的文档面板。 */
         ctx.inject(['commandUi'], (scope) => {
           scope.effect(() => scope.commandUi.register({
             name: 'doctab',
-            label: () => '打开文档页签',
-            description: () => '把右侧的「文档」页签推到前面（不发给模型）',
-            /* 没装 dsh-better-sidebar 时不显示这一行，免得点了没反应。 */
-            available: () => {
-              try {
-                return runtime.ctx !== null && runtime.ctx.get('betterSidebar') !== undefined
-              } catch (error) {
-                return false
-              }
+            label: () => '打开文档面板',
+            description: () => '打开插件的文档面板（拖动标题栏移动、四边拉伸；不发给模型）',
+            available: () => true,
+            ui: {
+              kind: 'action',
+              run: () => { openDocTab() },
             },
-            ui: { kind: 'action', run: () => { void openDocTab() } },
           }), 'annotate: /doctab')
         })
 
-        /* 优先把它做成右侧栏的一个页签，浮窗只当兜底。 */
-        try {
-          const sidebar = ctx.get('betterSidebar')
-          if (sidebar !== null && sidebar !== undefined && typeof sidebar.registerTab === 'function') {
-            ctx.effect(() => sidebar.registerTab({
-              id: 'dsh-annotate:doc',
-              title: () => '文档',
-              description: () => '对话文档：在文档里划句批注',
-              order: 40,
-              single: true,
-              component: (slotProps) => h(DocTabHost, slotProps),
-            }), 'annotate: 文档页签')
-          }
-        } catch (error) {
-          console.warn('[annotate] 注册文档页签失败，保留浮窗', error)
-        }
+        /* 不再向 dsh-better-sidebar 注册「文档」页签：
+           文档只由插件自己的面板承载（openDocTab），换 side-bar 版本/重启都不影响。
+           「在编辑器里打开」这类可选联动仍会在服务存在时出现，属于增强而不是依赖。 */
       },
     }
   },
