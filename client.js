@@ -2369,6 +2369,7 @@ window.__ModuleLoader__.load({
           h('div', { className: 'dsha-spacer' }),
           /* 新批注这一版也要能听写：线程卡里有，浮层里没有的话第一次就得打字。 */
           h(MicButton, { value: note, onChange: setNote, targetRef: areaRef }),
+          h(CopyButton, { text: captured.current.full }),
           h('button', { type: 'button', className: 'dsha-btn', onClick: () => dismiss() }, '取消'),
           h('button', {
             type: 'button',
@@ -2390,6 +2391,51 @@ window.__ModuleLoader__.load({
 
     /* ---------------------------------------------------------------- 文档按钮 */
 
+    /* 右键被插件接管后，系统菜单里的「复制」就没了 —— 这里补一颗。
+       优先用 navigator.clipboard，权限/环境不允许时退到 textarea + execCommand。 */
+    function copyText(text, done) {
+      const mark = () => { try { done() } catch (error) { /* 忽略 */ } }
+      try {
+        if (typeof navigator !== 'undefined' && navigator.clipboard !== undefined
+          && navigator !== null && typeof navigator.clipboard.writeText === 'function') {
+          navigator.clipboard.writeText(text).then(mark).catch(() => legacyCopy(text, mark))
+          return
+        }
+      } catch (error) {
+        /* 落到 legacy */
+      }
+      legacyCopy(text, mark)
+    }
+
+    function legacyCopy(text, done) {
+      try {
+        const area = document.createElement('textarea')
+        area.value = text
+        area.style.position = 'fixed'
+        area.style.left = '-9999px'
+        document.body.appendChild(area)
+        area.select()
+        const ok = document.execCommand('copy')
+        area.remove()
+        if (ok === true) done()
+      } catch (error) {
+        /* 复制不了就算了，别让整个批注框挂掉 */
+      }
+    }
+
+    function CopyButton(props) {
+      const [done, setDone] = React.useState(false)
+      const text = typeof props.text === 'string' ? props.text : ''
+      return h('button', {
+        type: 'button',
+        className: 'dsha-btn',
+        title: '复制选中的原文（右键被插件接管了，这里补上复制；Ctrl+C 也能用）',
+        onClick: () => copyText(text, () => {
+          setDone(true)
+          window.setTimeout(() => setDone(false), 1400)
+        }),
+      }, done ? '已复制' : '复制')
+    }
     function DocButton() {
       const store = useStore()
       /* 停靠模式下文档在右侧栏里，浮层不渲染 —— 这里把「看得见」按停靠算，
@@ -4056,7 +4102,7 @@ window.__ModuleLoader__.load({
 
     const DOC_PATH = '对话文档'
     /* 文档栏上会显示它：一眼看出跑的是不是刚改的那份客户端。 */
-    const PLUGIN_VERSION = '0.107.3'
+    const PLUGIN_VERSION = '0.107.4'
 
     /** 在聊天流里找最新一份 ```dsh-doc 围栏（助手输出的文档）。 */
     function scanDocBlocks() {
