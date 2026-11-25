@@ -551,7 +551,7 @@ window.__ModuleLoader__.load({
     const TARGET_TTL = 60000
 
     function emptyState() {
-      return { schema: SCHEMA, batchSeq: 0, sessions: {}, open: false, active: null, undo: null, surface: null, debug: '', ui: null, collapsed: {}, docOpen: false, docPending: null, docToolbar: null, doc: null, docEditing: false, docThread: null, docThreadBox: null, docWide: false, docWideBox: null, docFloatBox: null, docDrawer: false, docDrawerW: 340, docPick: '', docView: null, docFont: 15, docFontLocal: false, docLibrary: {}, sentTail: '', sentTails: [], picked: {}, reanchorId: '', reanchorHint: '', autoDoc: true, autoDocLocal: false, hideDocBlocks: true, docSeen: '', onlyQueued: false, onlyLost: false, keepReplyWindow: 4, docFind: '', docFindAt: 0, docFindOpen: false, reactions: '', wideRightClick: true, dockDocTab: false }
+      return { schema: SCHEMA, batchSeq: 0, sessions: {}, open: false, active: null, undo: null, surface: null, debug: '', ui: null, collapsed: {}, docOpen: false, docPending: null, docToolbar: null, doc: null, docEditing: false, docThread: null, docThreadBox: null, docWide: false, docWideBox: null, docFloatBox: null, docDrawer: false, docDrawerW: 340, docPick: '', docView: null, docFont: 15, docFontLocal: false, docLibrary: {}, sentTail: '', sentTails: [], picked: {}, reanchorId: '', reanchorHint: '', autoDoc: true, autoDocLocal: false, hideDocBlocks: true, docSeen: '', onlyQueued: false, onlyLost: false, keepReplyWindow: 4, docFind: '', docFindAt: 0, docFindOpen: false, reactions: '', wideRightClick: true, dockDocTab: false, docDetached: false }
     }
 
     /** 聊天引文可以压空白；文件引文必须逐字保留换行，否则模型定位不到原文。 */
@@ -4046,7 +4046,7 @@ window.__ModuleLoader__.load({
 
     const DOC_PATH = '对话文档'
     /* 文档栏上会显示它：一眼看出跑的是不是刚改的那份客户端。 */
-    const PLUGIN_VERSION = '0.107.0'
+    const PLUGIN_VERSION = '0.107.1'
 
     /** 在聊天流里找最新一份 ```dsh-doc 围栏（助手输出的文档）。 */
     function scanDocBlocks() {
@@ -5859,6 +5859,17 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * 浮层宿主：决定「文档窗口」要不要挂在 shell.overlay 上。
+     * 停靠模式（dockDocTab）开着时窗口不再渲染 —— 文档在右侧栏里看；
+     * 但用户点「⇱ 窗口」把它拖出来后（docDetached），窗口又回来。
+     */
+    function DocOverlayHost() {
+      const store = useStore()
+      if (store.dockDocTab === true && store.docDetached !== true) return null
+      return h(DocBoundary, null, h(DocPanel, { wide: true }))
+    }
+
+    /**
      * 文档面板的错误边界：面板一旦渲染抛错，宿主会把整个浮层判成「没在渲染」，
      * 界面上什么都不出现（side-bar 页签那边则显示一句「这类内容还没有可用的查看方式」）。
      * 这里把异常**写进文件**再吞掉，至少能查：
@@ -6131,6 +6142,10 @@ window.__ModuleLoader__.load({
           if (event.key !== 'Escape') return
           if (state.docDrawer === true) {
             commit({ docDrawer: false })
+            return
+          }
+          if (state.docOpen === true || state.docDetached === true) {
+            commit({ docOpen: false, docDetached: false })
             return
           }
           if (wide && state.docWide === true) commit({ docWide: false })
@@ -7224,8 +7239,10 @@ window.__ModuleLoader__.load({
             h('button', {
               type: 'button',
               className: 'dsha-mini dsha-mini-on',
-              title: wide ? '收回侧栏（Esc）' : '关闭这个面板',
-              onClick: () => commit(wide ? { docWide: false } : { docOpen: false }),
+              title: '关掉这个面板（Esc）',
+              /* 以前只关一把锁：浮层是用 docOpen 打开的，点「收起」却去关 docWide，所以点了没反应。
+                 现在三把都关（含"从侧栏拖出来"的临时标记）。 */
+              onClick: () => commit({ docOpen: false, docWide: false, docDetached: false }),
             }, wide ? '‹ 收起' : '关闭'),
             h('span', { className: 'dsha-title' }, '对话文档'),
             h('span', { className: 'dsha-hint' }, marks.length > 0 ? String(marks.length) + ' 条批注' : '暂无批注'),
@@ -7236,6 +7253,14 @@ window.__ModuleLoader__.load({
           className: 'dsha-doc-bar',
         },
           h('div', { className: 'dsha-doc-bar-inner' },
+          embedded
+            ? h('button', {
+                type: 'button',
+                className: 'dsha-mini dsha-mini-on',
+                title: '把文档拖出来：变成可以拖动、拉边的独立窗口（不影响停靠设置）',
+                onClick: () => commit({ docOpen: true, docDetached: true }),
+              }, '⇱ 窗口')
+            : null,
           h('div', { className: 'dsha-nav' },
             h('button', {
               type: 'button',
@@ -8080,7 +8105,7 @@ window.__ModuleLoader__.load({
           name: 'shell.overlay',
           id: 'annotate-doc',
           order: 82,
-        }, () => h(DocBoundary, null, h(DocPanel, { wide: true }))))
+        }, DocOverlayHost))
 
         ctx.slots.inject('shell.overlay', () => ctx.slots.register({
           name: 'shell.overlay',
@@ -8140,6 +8165,8 @@ window.__ModuleLoader__.load({
               runtime.dockDispose = null
             }
             if (want) {
+              /* 切到停靠模式：自建窗口先收起来，别两处同时显示同一份文档。 */
+              commit({ docOpen: false, docWide: false, docDetached: false })
               try {
                 runtime.dockDispose = sidebar.registerTab({
                   id: 'dsh-annotate:doc',
