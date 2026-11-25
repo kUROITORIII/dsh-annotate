@@ -2390,7 +2390,10 @@ window.__ModuleLoader__.load({
 
     function DocButton() {
       const store = useStore()
-      const open = store.docOpen === true
+      /* 停靠模式下文档在右侧栏里，浮层不渲染 —— 这里把「看得见」按停靠算，
+         否则按钮会一直亮提示点、tooltip 还写着「收起」。 */
+      const docked = store.dockDocTab === true && store.docDetached !== true
+      const open = store.docOpen === true || docked
       /* 「有文档、但面板没开」时给个提示点：模型写完文档常说「写在右边了」，
          关着面板的人不知道去哪找（2026-11-26 用户提的场景）。 */
       const hasDoc = store.doc !== null && store.doc !== undefined
@@ -2400,10 +2403,15 @@ window.__ModuleLoader__.load({
       return h('button', {
         type: 'button',
         className: attention ? 'dsha-btn dsha-btn-attn' : 'dsha-btn',
-        title: open ? '收起对话文档' : (hasDoc ? '这轮生成了文档，点开看' : '打开对话文档'),
+        title: docked ? '把右侧栏的「文档」页签推到前面' : (open ? '收起对话文档' : (hasDoc ? '这轮生成了文档，点开看' : '打开对话文档')),
         'aria-pressed': open ? 'true' : 'false',
         onClick: () => {
-          /* 统一开插件自己的面板：不依赖 dsh-better-sidebar（见 openDocTab 的注释）。 */
+          /* 停靠模式：把右侧栏的页签推到前面（浮层此时不渲染，切 docOpen 等于点了个空）。
+             否则：开关自己的窗口。 */
+          if (store.dockDocTab === true) {
+            openDocTab()
+            return
+          }
           commit({ docOpen: !open })
         },
       }, h('span', { className: 'dsha-ico' }, '\u25A4'), h('span', null, '文档'),
@@ -4046,7 +4054,7 @@ window.__ModuleLoader__.load({
 
     const DOC_PATH = '对话文档'
     /* 文档栏上会显示它：一眼看出跑的是不是刚改的那份客户端。 */
-    const PLUGIN_VERSION = '0.107.1'
+    const PLUGIN_VERSION = '0.107.2'
 
     /** 在聊天流里找最新一份 ```dsh-doc 围栏（助手输出的文档）。 */
     function scanDocBlocks() {
@@ -5512,6 +5520,10 @@ window.__ModuleLoader__.load({
         } catch (error) {
           /* 回落 */
         }
+        /* 停靠模式但页签不可用（没装/注册失败）：临时当「拖出来」处理，窗口照常出现，
+           不让用户看到"点了没反应"。 */
+        commit({ docOpen: true, docDetached: true })
+        return true
       }
       commit({ docOpen: true })
       return true
