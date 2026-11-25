@@ -53,9 +53,9 @@ window.__ModuleLoader__.load({
 .dsha-warn{font-size:11px;line-height:1.55;color:var(--dsw-alias-state-warn-primary);border-radius:6px;
   padding:6px 7px;background:color-mix(in srgb,var(--dsw-alias-state-warn-primary) 12%,transparent)}
 .dsha-tag[data-target="file"]{color:var(--dsw-alias-state-success-primary);border-color:currentColor}
-.dsha-float{position:fixed;z-index:70;pointer-events:auto}
+.dsha-float{position:fixed;z-index:97;pointer-events:auto}
 .dsha-panel{position:fixed;top:64px;left:50%;transform:translateX(-50%);bottom:96px;width:380px;max-width:calc(100vw - 32px);
-  display:flex;flex-direction:column;z-index:60;pointer-events:auto;
+  display:flex;flex-direction:column;z-index:96;pointer-events:auto;
   border-radius:13px;border:1px solid var(--dsw-alias-border-l1);
   background:var(--dsw-alias-bg-layer-1);box-shadow:0 16px 40px rgba(0,0,0,.34);
   color:var(--dsw-alias-label-primary);font-size:12px;font-family:inherit;overflow:hidden}
@@ -236,7 +236,9 @@ window.__ModuleLoader__.load({
   border:none;border-radius:0;box-shadow:none;background:transparent}
 /* 放大阅读：铺到窗口上，正文按阅读宽度居中，不靠 transform（否则线程卡的 fixed 坐标会跑） */
 /* 放大阅读：一个可以拖动、可以拉边的窗口（几何存在 docWideBox） */
-.dsha-doc-wide{z-index:88;border-radius:16px;box-shadow:0 32px 80px rgba(0,0,0,.55)}
+/* 层级约定：文档窗口 86 < 工具条 90 < 抽屉 94 < 线程卡 95 < 批注面板 96 < 批注浮层 97。
+   文档是用来读的，批注是用来操作的 —— 批注永远压在上面，否则一开文档就把批注盖住。 */
+.dsha-doc-wide{z-index:86;border-radius:16px;box-shadow:0 32px 80px rgba(0,0,0,.55)}
 .dsha-doc-wide .dsha-doc-head{cursor:grab}
 .dsha-doc-wide .dsha-doc-head:active{cursor:grabbing}
 /* 文档窗口（放大 / 浮动）四面八向都能拖 */
@@ -4054,7 +4056,7 @@ window.__ModuleLoader__.load({
 
     const DOC_PATH = '对话文档'
     /* 文档栏上会显示它：一眼看出跑的是不是刚改的那份客户端。 */
-    const PLUGIN_VERSION = '0.107.2'
+    const PLUGIN_VERSION = '0.107.3'
 
     /** 在聊天流里找最新一份 ```dsh-doc 围栏（助手输出的文档）。 */
     function scanDocBlocks() {
