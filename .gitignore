@@ -1,0 +1,23 @@
+# 依赖与构建产物
+node_modules/
+dist/
+*.tgz
+
+# 本地快照（改动前的备份目录，不进仓库）
+*.backup-*/
+*.rollback-*/
+*.wip-*/
+
+# 开发过程文档：只在本地留，不进仓库（HANDOFF / NEXT / PLAN / RESEARCH / 调研笔记 / 旧截图）
+dev/
+
+# 系统与编辑器
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+
+# 日志与临时文件
+*.log
+.history/

@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="300" viewBox="0 0 640 300">
+  <rect width="640" height="300" fill="#14171c"/>
+  <rect x="24" y="22" width="360" height="256" rx="12" fill="#1b1f26" stroke="#2a3038"/>
+  <text x="44" y="52" fill="#93a0ad" font-family="Segoe UI, sans-serif" font-size="13">需要你拍板的 3 件事</text>
+  <rect x="44" y="66" width="300" height="34" rx="4" fill="#3a3520"/>
+  <text x="52" y="88" fill="#f3e6b0" font-family="Segoe UI, sans-serif" font-size="12">1. 样板楼选 J8 / S11 / W4 行不行?</text>
+  <text x="44" y="126" fill="#c8d2dc" font-family="Segoe UI, sans-serif" font-size="12">2. 仓库夹层能不能上去?</text>
+  <text x="44" y="150" fill="#c8d2dc" font-family="Segoe UI, sans-serif" font-size="12">3. 写字楼门厅的空牌匾</text>
+  <rect x="44" y="170" width="300" height="1" fill="#2a3038"/>
+  <text x="44" y="196" fill="#7f8b98" font-family="Segoe UI, sans-serif" font-size="12">选中右边的句子 → 右键 → 批注</text>
+  <circle cx="330" cy="86" r="12" fill="#2f8f83"/>
+  <text x="326" y="91" fill="#ffffff" font-family="Segoe UI, sans-serif" font-size="12">3</text>
+  <rect x="404" y="34" width="212" height="232" rx="12" fill="#1b1f26" stroke="#2a3038"/>
+  <rect x="416" y="46" width="188" height="40" rx="6" fill="#242a32"/>
+  <text x="424" y="64" fill="#a9b4c0" font-family="Segoe UI, sans-serif" font-size="11">样板楼选 J8 / S11 / W4 行不行?</text>
+  <circle cx="428" cy="106" r="9" fill="#2f8f83"/>
+  <text x="443" y="110" fill="#c8d2dc" font-family="Segoe UI, sans-serif" font-size="11">要改：直接定 J8</text>
+  <circle cx="428" cy="136" r="9" fill="#f0a33c"/>
+  <text x="443" y="140" fill="#c8d2dc" font-family="Segoe UI, sans-serif" font-size="11">问一句：为什么不是 N5?</text>
+  <rect x="416" y="212" width="188" height="30" rx="7" fill="#2f8f83"/>
+  <text x="452" y="232" fill="#ffffff" font-family="Segoe UI, sans-serif" font-size="12">发送 3 条</text>
+</svg>

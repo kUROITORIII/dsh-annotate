@@ -1,0 +1,40 @@
+{
+  "name": "dsh-annotate",
+  "version": "0.105.0",
+  "private": true,
+  "license": "MIT",
+  "keywords": ["dsh", "dsh-plugin", "annotate", "annotation", "document", "markdown", "review"],
+  "type": "module",
+  "description": "划句批注：选中对话里的一句话，右键留下批注，攒几条一起发给 AI，让模型逐条回答或逐处修改。",
+  "icon": "icon.svg",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md",
+    "vendor",
+    "locale/*.json",
+    "docs",
+    "icon.svg"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ]
+    }
+  }
+}

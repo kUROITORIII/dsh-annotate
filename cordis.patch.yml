@@ -1,0 +1,11 @@
+# dsh-annotate bundle patch: one host row over the Web or Desktop profile.
+# 注意：config 段必须存在，DSH 才会把这一行当成"有配置的组件"，
+# 客户端注册的 plugins.row.config（键 = <包名>#<行 id> = dsh-annotate#annotate）才有地方渲染。
+# 值写不写都行，真正的字段定义在 index.js 的 export const Config 里。
+- insert:
+    - id: annotate
+      name: dsh-annotate
+      config:
+        autoOpenDoc: true
+        defaultFont: 15
+        keepReplyWindow: 4
