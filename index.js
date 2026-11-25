@@ -27,6 +27,9 @@ export const Config = z.object({
   wideRightClick: z.boolean().default(true)
     .description('右键唤出范围放宽：在文档正文里右键就开批注框（关掉后必须先用鼠标划中一句话再右键）')
     .volatile(),
+  dockDocTab: z.boolean().default(false)
+    .description('文档停靠在右侧栏（需要 dsh-better-sidebar）：开着文档会开成右侧栏页签，关着用插件自己的窗口；页签不可用时会自动回落到窗口')
+    .volatile(),
   docDir: z.string().default('')
     .description('文档文件存放目录（留空＝${DSH_HOME}/annotate-docs）；方案 B′ 第一步用')
     .volatile(),

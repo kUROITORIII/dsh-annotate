@@ -551,7 +551,7 @@ window.__ModuleLoader__.load({
     const TARGET_TTL = 60000
 
     function emptyState() {
-      return { schema: SCHEMA, batchSeq: 0, sessions: {}, open: false, active: null, undo: null, surface: null, debug: '', ui: null, collapsed: {}, docOpen: false, docPending: null, docToolbar: null, doc: null, docEditing: false, docThread: null, docThreadBox: null, docWide: false, docWideBox: null, docFloatBox: null, docDrawer: false, docDrawerW: 340, docPick: '', docView: null, docFont: 15, docFontLocal: false, docLibrary: {}, sentTail: '', sentTails: [], picked: {}, reanchorId: '', reanchorHint: '', autoDoc: true, autoDocLocal: false, hideDocBlocks: true, docSeen: '', onlyQueued: false, onlyLost: false, keepReplyWindow: 4, docFind: '', docFindAt: 0, docFindOpen: false, reactions: '', wideRightClick: true }
+      return { schema: SCHEMA, batchSeq: 0, sessions: {}, open: false, active: null, undo: null, surface: null, debug: '', ui: null, collapsed: {}, docOpen: false, docPending: null, docToolbar: null, doc: null, docEditing: false, docThread: null, docThreadBox: null, docWide: false, docWideBox: null, docFloatBox: null, docDrawer: false, docDrawerW: 340, docPick: '', docView: null, docFont: 15, docFontLocal: false, docLibrary: {}, sentTail: '', sentTails: [], picked: {}, reanchorId: '', reanchorHint: '', autoDoc: true, autoDocLocal: false, hideDocBlocks: true, docSeen: '', onlyQueued: false, onlyLost: false, keepReplyWindow: 4, docFind: '', docFindAt: 0, docFindOpen: false, reactions: '', wideRightClick: true, dockDocTab: false }
     }
 
     /** 聊天引文可以压空白；文件引文必须逐字保留换行，否则模型定位不到原文。 */
@@ -796,7 +796,8 @@ window.__ModuleLoader__.load({
           }
           base.docLibrary = library
         }
-        if (parsed.docWideBox !== null && typeof parsed.docWideBox === 'object') {
+        if (parsed.dockDocTab === true) base.dockDocTab = true
+      if (parsed.docWideBox !== null && typeof parsed.docWideBox === 'object') {
           const box = parsed.docWideBox
           if (typeof box.x === 'number' && typeof box.y === 'number'
             && typeof box.w === 'number' && typeof box.h === 'number') {
@@ -927,6 +928,7 @@ window.__ModuleLoader__.load({
           docThreadBox: state.docThreadBox,
           docDrawerW: state.docDrawerW,
           autoDoc: state.autoDoc,
+          dockDocTab: state.dockDocTab === true,
           hideDocBlocks: state.hideDocBlocks !== false,
           docSeen: typeof state.docSeen === 'string' ? state.docSeen : '',
           onlyQueued: state.onlyQueued === true,
@@ -1953,7 +1955,7 @@ window.__ModuleLoader__.load({
     /** 根作用域的侧栏拿不到 inputActions，由会话作用域的按钮把它挂过来。
      *  `target` 是文件选区的唯一接缝：谁采到「文件 + 行号 + 原文」谁就往这里写，
      *  AnnotateSurface 消费后立刻清空，绝不跨批次残留。 */
-    const runtime = { actions: null, target: null, targetAt: 0, trace: '', ctx: null, replyScan: { refs: [], total: 0 }, replySeen: {}, lostCache: new Map(), autoOpen: {}, settingsForm: null }
+    const runtime = { actions: null, target: null, targetAt: 0, trace: '', ctx: null, replyScan: { refs: [], total: 0 }, replySeen: {}, lostCache: new Map(), autoOpen: {}, settingsForm: null, dockDispose: null, dockOn: null }
 
     function freshTarget() {
       if (runtime.target === null) return null
@@ -4044,7 +4046,7 @@ window.__ModuleLoader__.load({
 
     const DOC_PATH = '对话文档'
     /* 文档栏上会显示它：一眼看出跑的是不是刚改的那份客户端。 */
-    const PLUGIN_VERSION = '0.106.2'
+    const PLUGIN_VERSION = '0.107.0'
 
     /** 在聊天流里找最新一份 ```dsh-doc 围栏（助手输出的文档）。 */
     function scanDocBlocks() {
@@ -5493,12 +5495,24 @@ window.__ModuleLoader__.load({
       return value === null ? 4 : value
     }
 
-    /** 打开文档面板：**我们自己的窗口**，不依赖任何第三方插件。
-     *  历史：这里曾经优先把文档塞进 dsh-better-sidebar 的右侧栏页签，失败才退回浮层。
-     *  问题：side-bar 重启后页签注册表是新的，旧注册丢失 → openTab 能开出没有视图的空页签
-     *  （界面只剩「这类内容还没有可用的查看方式」）。2026-11-26 起改成**单一容器**：
-     *  文档始终在插件自己的面板里开，side-bar 只在「在编辑器里打开」这种可选联动里才用到。 */
+    /** 打开文档。
+     *  默认（dockDocTab 关）：开**我们自己的窗口**，不依赖任何第三方插件。
+     *  打开 dockDocTab 时：优先停靠到 dsh-better-sidebar 的右侧栏页签；
+     *  页签不可用（没装 / 没注册上 / 调不通）就**自动回落**到自己的窗口，绝不出现「点了没反应」。
+     *  历史：0.106.0 之前无条件优先页签，side-bar 一重启页签注册就丢，
+     *  只留下一个没有视图的空页签（占位文案「这类内容还没有可用的查看方式」）。 */
     function openDocTab() {
+      if (state.dockDocTab === true) {
+        try {
+          const service = runtime.ctx === null ? null : runtime.ctx.get('betterSidebar')
+          if (service !== null && service !== undefined && typeof service.openTab === 'function') {
+            service.openTab({ type: 'dsh-annotate:doc', title: '文档' })
+            return true
+          }
+        } catch (error) {
+          /* 回落 */
+        }
+      }
       commit({ docOpen: true })
       return true
     }
@@ -5533,6 +5547,11 @@ window.__ModuleLoader__.load({
       /* 右键唤出范围只由配置决定（没配就是宽模式）。 */
       if (typeof value.wideRightClick === 'boolean' && value.wideRightClick !== state.wideRightClick) {
         patch.wideRightClick = value.wideRightClick
+      }
+      /* 文档停靠：开着就把「文档」交给右侧栏页签，关着就用插件自己的窗口（默认关＝零依赖）。 */
+      const dock = value.dockDocTab === true
+      if (dock !== (state.dockDocTab === true)) {
+        patch.dockDocTab = dock
       }
       let changed = false
       for (const key of Object.keys(patch)) {
@@ -7761,10 +7780,11 @@ window.__ModuleLoader__.load({
           reactions: typeof value.reactions === 'string' ? value.reactions : '',
           /* 宿主还没重载时这个字段可能不存在（旧 Config）：界面上按默认「开」显示，别显示成关。 */
           wideRightClick: value.wideRightClick !== false,
+          dockDocTab: value.dockDocTab === true,
         })
       }, [revisionKey])
 
-      if (props.view === 'summary') return '文档自动打开、默认字号、回复锚点队列长度、右键唤出范围、划句表情。'
+      if (props.view === 'summary') return '文档自动打开、文档停靠右侧栏、默认字号、回复锚点队列长度、右键唤出范围、划句表情。'
       if (form === null) {
         return h('div', { className: 'dsha-set-note' }, '没有拿到配置表单：请从「插件」页打开这个插件的这一行再进「配置」。')
       }
@@ -7809,6 +7829,7 @@ window.__ModuleLoader__.load({
             { op: 'set', path: ['defaultFont'], value: font === null ? 15 : font },
             { op: 'set', path: ['keepReplyWindow'], value: window === null ? 4 : window },
             { op: 'set', path: ['wideRightClick'], value: draft.wideRightClick !== false },
+            { op: 'set', path: ['dockDocTab'], value: draft.dockDocTab === true },
             { op: 'set', path: ['reactions'], value: draft.reactions },
           ], snapshot.revision)
           setNote(ok ? '已保存，下一次操作起生效。' : '保存被拒绝：配置已在别处改过，已重新读取。')
@@ -7885,6 +7906,19 @@ window.__ModuleLoader__.load({
           })),
         h('div', { className: 'dsha-set-row' },
           h('div', { className: 'dsha-set-main' },
+            h('div', { className: 'dsha-set-label' }, '文档停靠在右侧栏'),
+              h('div', { className: 'dsha-set-desc' }, '开：文档开成 dsh-better-sidebar 右侧栏里的「文档」页签（要装那个插件）。关：文档开成插件自己的窗口，可拖动、八向拉伸。页签用不了时自动回落到窗口，不会点了没反应。'),
+            ),
+            h('input', {
+              type: 'checkbox',
+              className: 'dsha-set-switch',
+              checked: draft.dockDocTab === true,
+              disabled,
+              title: '需要 dsh-better-sidebar；不装也能用，会自动用插件自己的窗口',
+              onChange: event => edit('dockDocTab', event.target.checked),
+            })),
+          h('div', { className: 'dsha-set-row' },
+            h('div', { className: 'dsha-set-main' },
             h('div', { className: 'dsha-set-label' }, '划句表情'),
             h('div', { className: 'dsha-set-desc' }, '文档和聊天里选中文字后浮出的一排。每一行三件：表情、这个表情代表什么意思、开关（开着才出现在表情条上）。点某种表情会把它的含义连同你选中的句子一起发给我。'),
             h('div', { className: 'dsha-set-reacts' },
@@ -8091,9 +8125,49 @@ window.__ModuleLoader__.load({
           }), 'annotate: /doctab')
         })
 
-        /* 不再向 dsh-better-sidebar 注册「文档」页签：
-           文档只由插件自己的面板承载（openDocTab），换 side-bar 版本/重启都不影响。
-           「在编辑器里打开」这类可选联动仍会在服务存在时出现，属于增强而不是依赖。 */
+        /* 文档停靠（可选）：只有 dockDocTab 打开时才往 dsh-better-sidebar 注册页签。
+           - 走 ctx.inject：服务不在就永不触发，服务重启/升级后会自动重新注册（修过「注册只试一次」的坑）；
+           - 每秒对一次状态：设置页一改，页签立刻出现/消失，不用重启；
+           - 关掉就注销，文档仍由插件自己的窗口承载（openDocTab 的回落分支）。 */
+        ctx.inject(['betterSidebar'], (sidebarCtx) => {
+          const sidebar = sidebarCtx.betterSidebar
+          if (sidebar === null || sidebar === undefined || typeof sidebar.registerTab !== 'function') return
+          const sync = () => {
+            const want = state.dockDocTab === true
+            if (want === runtime.dockOn) return
+            if (runtime.dockDispose !== null) {
+              try { runtime.dockDispose() } catch (error) { /* 已经注销过 */ }
+              runtime.dockDispose = null
+            }
+            if (want) {
+              try {
+                runtime.dockDispose = sidebar.registerTab({
+                  id: 'dsh-annotate:doc',
+                  title: () => '文档',
+                  description: () => '对话文档：在文档里划句批注',
+                  order: 40,
+                  single: true,
+                  component: (slotProps) => h(DocBoundary, null, h(DocTabHost, slotProps)),
+                })
+              } catch (error) {
+                console.warn('[annotate] 注册文档页签失败，文档仍在插件自己的窗口里', error)
+                runtime.dockOn = false
+                return
+              }
+            }
+            runtime.dockOn = want
+          }
+          sync()
+          const timer = window.setInterval(sync, 1000)
+          sidebarCtx.effect(() => () => {
+            window.clearInterval(timer)
+            if (runtime.dockDispose !== null) {
+              try { runtime.dockDispose() } catch (error) { /* 忽略 */ }
+              runtime.dockDispose = null
+            }
+            runtime.dockOn = null
+          }, 'annotate: 文档页签跟随开关')
+        })
       },
     }
   },

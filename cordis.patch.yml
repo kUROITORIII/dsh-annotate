@@ -9,3 +9,4 @@
         autoOpenDoc: true
         defaultFont: 15
         keepReplyWindow: 4
+        dockDocTab: false
