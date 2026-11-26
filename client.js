@@ -327,6 +327,15 @@ window.__ModuleLoader__.load({
 .dsha-dot[data-status="queued"]{background:rgba(140,140,150,.8)}
 .dsha-dot[data-status="sent"]{background:#4d6bfe}
 .dsha-dot[data-status="answered"]{background:#3cbe78}
+/* 卡片收紧（2026-11-27）：引文 1 行、批注与回复各 3 行，长内容点「展开全部」。 */
+.dsha-card-quote{-webkit-line-clamp:1}
+.dsha-card-note{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.dsha-reply{display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.dsha-card-open .dsha-card-note,.dsha-card-open .dsha-reply{display:block;-webkit-line-clamp:unset;overflow:visible}
+.dsha-search{width:132px;height:22px;padding:0 7px;border-radius:6px;font-family:inherit;font-size:11.5px;
+  border:1px solid var(--dsw-alias-border-l1);background:color-mix(in srgb,var(--dsw-alias-bg-base) 70%,transparent);
+  color:var(--dsw-alias-label-primary);outline:none}
+.dsha-search:focus{border-color:rgba(77,107,254,.55)}
 .dsha-flash{font-size:11px;color:#8aa0ff;flex:none}
 .dsha-doc-editable{outline:none;border-radius:4px;white-space:pre-wrap;
   box-shadow:inset 0 0 0 1px transparent}
@@ -2745,6 +2754,9 @@ window.__ModuleLoader__.load({
 
       /* 所有 hook 必须在早返回之前：否则开关面板时 hook 数量变化，React 会抛 #310（渲染更多 hook）。 */
       const [clearArm, setClearArm] = React.useState(null)
+      /* 抽屉搜索词 + 卡片「展开全部」状态：都只是显示层，不影响发送集合。 */
+      const [query, setQuery] = React.useState('')
+      const [openCards, setOpenCards] = React.useState({})
       React.useEffect(() => {
         if (state.ui === null) commit({ ui: defaultGeometry() }, true)
       }, [])
@@ -2884,9 +2896,12 @@ window.__ModuleLoader__.load({
 
       const card = (entry, index) => {
         const lost = lostNow(entry)
+        const longText = String(entry.note === undefined ? '' : entry.note).length
+          + String(entry.reply === undefined ? '' : entry.reply).length > 140
+        const expanded = openCards[entry.id] === true
         return h('div', {
           key: entry.id,
-          className: 'dsha-card',
+          className: openCards[entry.id] === true ? 'dsha-card dsha-card-open' : 'dsha-card',
           'data-status': entry.status,
           'data-lost': lost ? '1' : '0',
         },
@@ -2969,9 +2984,16 @@ window.__ModuleLoader__.load({
         /* 「只看未发」/「只看失效」：只影响显示，不影响 list 本身（发送集合、计数都按 list 算）。 */
         const onlyQueued = state.onlyQueued === true
         const onlyLost = state.onlyLost === true
+        const needle = query.trim().toLowerCase()
         list.forEach((entry, index) => {
           if (onlyQueued && entry.status !== 'queued') return
           if (onlyLost && lostNow(entry) !== true) return
+          /* 搜索：只过滤「显示」，list / pending / toSend 都不动（发送范围不跟搜索走）。 */
+          if (needle !== '') {
+            const hay = [entry.quote, entry.note, entry.reply, entry.path]
+              .filter(text => typeof text === 'string').join('\n').toLowerCase()
+            if (hay.indexOf(needle) < 0) return
+          }
           const key = groupKeyOf(entry)
           if (!byKey.has(key)) byKey.set(key, [])
           byKey.get(key).push({ entry, index })
@@ -3032,6 +3054,17 @@ window.__ModuleLoader__.load({
           onDoubleClick: () => commit({ ui: defaultGeometry() }, true),
         },
           h('span', { className: 'dsha-title' }, '划句批注'),
+          h('input', {
+            type: 'search',
+            className: 'dsha-search',
+            value: query,
+            placeholder: '搜批注 / 回复 / 文件…',
+            title: '只过滤显示，不影响要发送的批注',
+            onChange: event => setQuery(event.target.value),
+          }),
+          query.trim() === ''
+            ? null
+            : h('span', { className: 'dsha-hint' }, '命中 ' + String(grouped.reduce((sum, group) => sum + group.rows.length, 0))),
           pending.length > 0
             ? h('span', { className: 'dsha-count' },
               chosen.length > 0
@@ -4128,7 +4161,7 @@ window.__ModuleLoader__.load({
 
     const DOC_PATH = '对话文档'
     /* 文档栏上会显示它：一眼看出跑的是不是刚改的那份客户端。 */
-    const PLUGIN_VERSION = '0.108.1'
+    const PLUGIN_VERSION = '0.109.0'
 
     /** 在聊天流里找最新一份 ```dsh-doc 围栏（助手输出的文档）。 */
     function scanDocBlocks() {
@@ -6423,10 +6456,15 @@ window.__ModuleLoader__.load({
            这时别让文档栏变成「还没有文档」—— 本会话在文档库里存着的那份就是它，拿出来接着用。 */
         const adoptFromLibrary = () => {
           const lib = state.docLibrary === undefined || state.docLibrary === null ? {} : state.docLibrary
+          /* 只认「属于本会话」的条目：file:<本会话尾巴>/... 或聊天键（不以 file: 开头）。
+             以前只按 entry.sid 过滤，而 sid 被双实例时期写串过，别的会话目录的文件也能混进来 →
+             面板在几份文档之间轮流跳（2026-11-27 日志实锤）。 */
+          const ownTail = 'file:' + sessionTail(sessionId) + '/'
           const mine = Object.keys(lib)
             .map(key => [key, lib[key]])
-            .filter(([, entry]) => entry !== null && entry !== undefined
+            .filter(([key, entry]) => entry !== null && entry !== undefined
               && entry.sid === sessionId && typeof entry.text === 'string' && entry.text !== '')
+            .filter(([key]) => String(key).indexOf('file:') !== 0 || String(key).indexOf(ownTail) === 0)
             .sort((a, b) => Number(b[1].at === undefined ? 0 : b[1].at) - Number(a[1].at === undefined ? 0 : a[1].at))
           /* 正在翻历史版就完全不插手（「选中的那份没了就回最新」由另一个 effect 负责，
              这里再判一次会让刚点下的那份闪一下就没：两个地方都在改 docPick）。 */
@@ -6459,6 +6497,10 @@ window.__ModuleLoader__.load({
           })
         }
         const tick = () => {
+          /* 只让「当前会话」的那个面板写文档。页签和窗口可能同时存在，
+             另一个实例写进来就会被本实例当成「不是我的」再抢回去 —— 面板就这样每拍跳一次。 */
+          if (runtime.lastSid !== undefined && runtime.lastSid !== null
+            && runtime.lastSid !== sessionId && typeof runtime.lastSid === 'string') return
           runtime.docWhy = ''
           load()
           adoptFromLibrary()
