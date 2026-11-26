@@ -1018,6 +1018,24 @@ window.__ModuleLoader__.load({
       return docFingerprint(a) === docFingerprint(b)
     }
 
+    /* 切换文档时留一条记录：「两份文档来回跳」只能靠它定位。写进 ~/.dsh/annotate-client-debug.log */
+    function logDocSwitch(why, next) {
+      const from = state.doc
+      if (from === null || from === undefined || next === null || next === undefined) return
+      const fromKey = String(from.key === undefined ? '' : from.key)
+      const toKey = String(next.key === undefined ? '' : next.key)
+      if (fromKey === toKey) return
+      const line = '文档切换 [' + why + '] ' + fromKey + '(' + String(from.title === undefined ? '' : from.title) + ') → ' + toKey + '(' + String(next.title === undefined ? '' : next.title) + ')'
+      try { console.warn('[annotate] ' + line) } catch (error) { /* 忽略 */ }
+      try {
+        fetch('/annotate-log', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ at: new Date().toISOString(), text: line }),
+        }).catch(() => {})
+      } catch (error) { /* 忽略 */ }
+    }
+
     function putDoc(next, extra) {
       if (sameDocShape(state.doc, next)) {
         /* 内容没变也要给写穿一个机会：重启后文档是从 localStorage 恢复的，
@@ -1027,6 +1045,9 @@ window.__ModuleLoader__.load({
       }
       /* extra 用来把「换文档」和「退出历史版」放进同一次 commit：
          分两次写会出现「先换文档再清 pick」的中间态，面板闪一下。 */
+      const why = runtime.docWhy === undefined || runtime.docWhy === '' ? 'unknown' : runtime.docWhy
+      runtime.docWhy = ''
+      logDocSwitch(why, next)
       commit(extra === undefined ? { doc: next } : { ...extra, doc: next })
       schedulePersist()
       scheduleDocFile(next)
@@ -1483,6 +1504,7 @@ window.__ModuleLoader__.load({
         && current.source !== '' && shouldTakeFile({ ok: true, file: one.key, title: one.title, text: one.source }, current, state.docPick) !== true) {
         return false
       }
+      runtime.docWhy = 'file-restore'
       putDoc(one)
       return true
     }
@@ -4102,7 +4124,7 @@ window.__ModuleLoader__.load({
 
     const DOC_PATH = '对话文档'
     /* 文档栏上会显示它：一眼看出跑的是不是刚改的那份客户端。 */
-    const PLUGIN_VERSION = '0.107.4'
+    const PLUGIN_VERSION = '0.107.5'
 
     /** 在聊天流里找最新一份 ```dsh-doc 围栏（助手输出的文档）。 */
     function scanDocBlocks() {
@@ -6377,6 +6399,7 @@ window.__ModuleLoader__.load({
             return
           }
           adoptedSetOf(sessionId).add(chatKey)
+          runtime.docWhy = 'chat-adopt'
           putDoc({
             id: 'main',
             sid: sessionId,
@@ -6408,6 +6431,7 @@ window.__ModuleLoader__.load({
           if (!stale || state.docEditing === true) return
           if (mine.length === 0) return
           const [key, entry] = mine[0]
+          runtime.docWhy = 'library'
           const blocks = parseMarkdownDoc(entry.text)
           putDoc({
             id: 'main',
