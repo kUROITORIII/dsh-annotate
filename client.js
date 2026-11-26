@@ -2769,7 +2769,10 @@ window.__ModuleLoader__.load({
 
       const beginDrag = (event) => {
         if (event.button !== 0) return
-        if (event.target instanceof Element && event.target.closest('button') !== null) return
+        /* 按钮、输入框、文本域、下拉、可编辑区里按下去都不算「拖动标题栏」：
+           以前只排除 button，输入框被 preventDefault 掉，光标进不去（点不了/打不了字）。 */
+        if (event.target instanceof Element
+          && event.target.closest('button, input, textarea, select, [contenteditable="true"]') !== null) return
         event.preventDefault()
         const base = { mx: event.clientX, my: event.clientY, x: geo.x, y: geo.y }
         const move = (moving) => {
@@ -3051,7 +3054,11 @@ window.__ModuleLoader__.load({
           className: 'dsha-head',
           title: '拖动移动 · 双击复位',
           onPointerDown: beginDrag,
-          onDoubleClick: () => commit({ ui: defaultGeometry() }, true),
+          onDoubleClick: (event) => {
+            if (event.target instanceof Element
+              && event.target.closest('input, button, textarea, select') !== null) return
+            commit({ ui: defaultGeometry() }, true)
+          },
         },
           h('span', { className: 'dsha-title' }, '划句批注'),
           h('input', {
@@ -3061,6 +3068,8 @@ window.__ModuleLoader__.load({
             placeholder: '搜批注 / 回复 / 文件…',
             title: '只过滤显示，不影响要发送的批注',
             onChange: event => setQuery(event.target.value),
+            onPointerDown: event => event.stopPropagation(),
+            onDoubleClick: event => event.stopPropagation(),
           }),
           query.trim() === ''
             ? null
@@ -4161,7 +4170,7 @@ window.__ModuleLoader__.load({
 
     const DOC_PATH = '对话文档'
     /* 文档栏上会显示它：一眼看出跑的是不是刚改的那份客户端。 */
-    const PLUGIN_VERSION = '0.109.0'
+    const PLUGIN_VERSION = '0.109.1'
 
     /** 在聊天流里找最新一份 ```dsh-doc 围栏（助手输出的文档）。 */
     function scanDocBlocks() {
