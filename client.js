@@ -4128,7 +4128,7 @@ window.__ModuleLoader__.load({
 
     const DOC_PATH = '对话文档'
     /* 文档栏上会显示它：一眼看出跑的是不是刚改的那份客户端。 */
-    const PLUGIN_VERSION = '0.108.0'
+    const PLUGIN_VERSION = '0.108.1'
 
     /** 在聊天流里找最新一份 ```dsh-doc 围栏（助手输出的文档）。 */
     function scanDocBlocks() {
@@ -7358,6 +7358,18 @@ window.__ModuleLoader__.load({
             }, wide ? '‹ 收起' : '关闭'),
             h('span', { className: 'dsha-title' }, '对话文档'),
             h('span', { className: 'dsha-hint' }, marks.length > 0 ? String(marks.length) + ' 条批注' : '暂无批注'),
+            /* 反向出口：窗口开着但停靠关着时，给一颗「⇥ 停靠」，不用去设置页里翻。 */
+            (wide && store.dockDocTab !== true)
+              ? h('button', {
+                  type: 'button',
+                  className: 'dsha-mini dsha-mini-on',
+                  title: '把文档放回右侧栏（等价于在设置里打开「文档停靠在右侧栏」；没装 dsh-better-sidebar 时会还回到窗口）',
+                  onClick: () => {
+                    try { writePluginConfig({ dockDocTab: true }) } catch (error) { /* 宿主没接就只改本地 */ }
+                    commit({ dockDocTab: true, docOpen: false, docWide: false, docDetached: false })
+                  },
+                }, '⇥ 停靠')
+              : null,
             h('div', { className: 'dsha-spacer' }),
             wide ? h('span', { className: 'dsha-hint' }, '拖标题栏移动 · 拖边角改大小') : null,
           ),
