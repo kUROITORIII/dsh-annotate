@@ -1041,6 +1041,7 @@ window.__ModuleLoader__.load({
         /* 内容没变也要给写穿一个机会：重启后文档是从 localStorage 恢复的，
            这里若直接 return，磁盘上永远不会有文件。 */
         scheduleDocFile(next)
+        runtime.docWhy = ''
         return
       }
       /* extra 用来把「换文档」和「退出历史版」放进同一次 commit：
@@ -4127,7 +4128,7 @@ window.__ModuleLoader__.load({
 
     const DOC_PATH = '对话文档'
     /* 文档栏上会显示它：一眼看出跑的是不是刚改的那份客户端。 */
-    const PLUGIN_VERSION = '0.107.7'
+    const PLUGIN_VERSION = '0.108.0'
 
     /** 在聊天流里找最新一份 ```dsh-doc 围栏（助手输出的文档）。 */
     function scanDocBlocks() {
@@ -5595,7 +5596,7 @@ window.__ModuleLoader__.load({
         }
         /* 停靠模式但页签不可用（没装/注册失败）：临时当「拖出来」处理，窗口照常出现，
            不让用户看到"点了没反应"。 */
-        commit({ docOpen: true, docDetached: true })
+        commit({ docOpen: true })
         return true
       }
       commit({ docOpen: true })
@@ -5950,7 +5951,9 @@ window.__ModuleLoader__.load({
      */
     function DocOverlayHost() {
       const store = useStore()
-      if (store.dockDocTab === true && store.docDetached !== true) return null
+      /* 停靠开着就绝不渲染窗口：曾经允许「拖出来」时两个实例并存，结果两个 DocPanel 抢同一份
+         state.doc，面板每 300ms 在两份文档之间跳（2026-11-27 日志 984 行实锤）。 */
+      if (store.dockDocTab === true) return null
       return h(DocBoundary, null, h(DocPanel, { wide: true }))
     }
 
@@ -6456,6 +6459,7 @@ window.__ModuleLoader__.load({
           })
         }
         const tick = () => {
+          runtime.docWhy = ''
           load()
           adoptFromLibrary()
           /* 聊天里扫不到、库里也没有 → 最后才试磁盘上的文件（方案 B′）。 */
@@ -7366,7 +7370,11 @@ window.__ModuleLoader__.load({
                 type: 'button',
                 className: 'dsha-mini dsha-mini-on',
                 title: '把文档拖出来：变成可以拖动、拉边的独立窗口（不影响停靠设置）',
-                onClick: () => commit({ docOpen: true, docDetached: true }),
+                /* 「拖出来」= 关掉停靠设置 + 开独立窗口：保证只有一份在跑。 */
+                onClick: () => {
+                  try { writePluginConfig({ dockDocTab: false }) } catch (error) { /* 宿主没接就只改本地 */ }
+                  commit({ dockDocTab: false, docOpen: true, docDetached: false })
+                },
               }, '⇱ 窗口')
             : null,
           h('div', { className: 'dsha-nav' },
@@ -8266,6 +8274,7 @@ window.__ModuleLoader__.load({
           const sidebar = sidebarCtx.betterSidebar
           if (sidebar === null || sidebar === undefined || typeof sidebar.registerTab !== 'function') return
           const sync = () => {
+            /* 只按 dockDocTab 决定要不要页签；detached 不再参与（它现在等价于「关掉停靠」）。 */
             const want = state.dockDocTab === true
             if (want === runtime.dockOn) return
             if (runtime.dockDispose !== null) {
