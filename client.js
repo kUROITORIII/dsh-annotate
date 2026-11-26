@@ -1166,6 +1166,9 @@ window.__ModuleLoader__.load({
         const knownFile = state.doc !== null && state.doc !== undefined && typeof state.doc.fileName === 'string'
           ? state.doc.fileName
           : ''
+        /* 当前这份还没对上文件（典型是刚在聊天里采纳）：先让 scheduleDocFile 把它写下去，
+           别让「最新一份」把它顶成别的文档（会看起来像面板自己跳）。 */
+        if (knownFile === '' && state.doc !== null && state.doc !== undefined) return
         const url = '/annotate-doc/latest?sid=' + encodeURIComponent(sessionId)
           + (knownFile === '' ? '' : '&file=' + encodeURIComponent(knownFile))
         const one = await fetch(url).then(response => response.json())
@@ -4124,7 +4127,7 @@ window.__ModuleLoader__.load({
 
     const DOC_PATH = '对话文档'
     /* 文档栏上会显示它：一眼看出跑的是不是刚改的那份客户端。 */
-    const PLUGIN_VERSION = '0.107.5'
+    const PLUGIN_VERSION = '0.107.6'
 
     /** 在聊天流里找最新一份 ```dsh-doc 围栏（助手输出的文档）。 */
     function scanDocBlocks() {
@@ -6426,10 +6429,18 @@ window.__ModuleLoader__.load({
              这里再判一次会让刚点下的那份闪一下就没：两个地方都在改 docPick）。 */
           const pick = typeof state.docPick === 'string' ? state.docPick : ''
           if (pick !== '') return
-          const currentDoc = state.doc
-          const stale = currentDoc === null || currentDoc === undefined || currentDoc.sid !== sessionId
-          if (!stale || state.docEditing === true) return
+          if (state.docEditing === true) return
           if (mine.length === 0) return
+          /* 只补「真的空着」：以前用 sid 判 stale，sid 一对不上就每拍从库里挑「最新一份」，
+             而库里的 at 会被刷新 → 几份轮流当最新 → 面板每 300ms 跳一次
+             （2026-11-27 日志实锤：677 次切换来源都是 library）。 */
+          const currentDoc = state.doc
+          if (currentDoc !== null && currentDoc !== undefined) {
+            if (currentDoc.sid === sessionId) return              /* 本会话已有文档：库不插手 */
+            const currentKey = String(currentDoc.key === undefined ? '' : currentDoc.key)
+            const mineKeys = new Set(mine.map(([k]) => k))
+            if (mineKeys.has(currentKey)) return                  /* 当前这份就是本会话库里的：库不插手 */
+          }
           const [key, entry] = mine[0]
           runtime.docWhy = 'library'
           const blocks = parseMarkdownDoc(entry.text)
