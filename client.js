@@ -4127,7 +4127,7 @@ window.__ModuleLoader__.load({
 
     const DOC_PATH = '对话文档'
     /* 文档栏上会显示它：一眼看出跑的是不是刚改的那份客户端。 */
-    const PLUGIN_VERSION = '0.107.6'
+    const PLUGIN_VERSION = '0.107.7'
 
     /** 在聊天流里找最新一份 ```dsh-doc 围栏（助手输出的文档）。 */
     function scanDocBlocks() {
@@ -6825,9 +6825,16 @@ window.__ModuleLoader__.load({
         ? viewing.key
         : (doc !== null && typeof doc.key === 'string' ? doc.key : '')
       /* 当前文档里能找到这句原文吗（用于「批注记在旧文档键上」的兜底）。 */
-      const quoteInDoc = (quote) => {
-        if (typeof quote !== 'string' || quote === '') return false
-        return blocks.some(block => typeof block.text === 'string' && block.text.indexOf(quote) >= 0)
+      /* 这句原文在当前文档里出现几次：0 / 1 / 多次。短于 8 字的一律当 0（避免「一句话」这种误挂）。 */
+      const quoteHits = (quote) => {
+        if (typeof quote !== 'string' || quote.length < 8) return 0
+        let hits = 0
+        for (const block of blocks) {
+          if (typeof block.text !== 'string') continue
+          let at = block.text.indexOf(quote)
+          while (at >= 0) { hits += 1; at = block.text.indexOf(quote, at + 1) }
+        }
+        return hits
       }
       const marks = sessionId === null
         ? []
@@ -6838,7 +6845,12 @@ window.__ModuleLoader__.load({
             /* 文档从「聊天代码块」换成「磁盘文件」后键会变，旧批注的 docKey 对不上，
                于是整批从面板里消失。只要这句原文还在这份文档里，就当它是这份的。 */
             if (viewing !== null) return false
-            return quoteInDoc(entry.quote)
+            /* 兜底只在「键族变了」时认（聊天块 ↔ 磁盘文件），并且要求引文够长且只出现一次。
+               以前只比文字：另一份文档的「一句话」批注会挂到任何含这三个字的文档上。 */
+            const entryIsFile = String(entry.docKey).indexOf('file:') === 0
+            const activeIsFile = String(activeDocKey).indexOf('file:') === 0
+            if (entryIsFile === activeIsFile) return false
+            return quoteHits(entry.quote) === 1
           }
           return viewing === null
         })
@@ -7041,7 +7053,8 @@ window.__ModuleLoader__.load({
               if (entry.target !== 'doc') return entry
               if (entry.blockIndex === moved.blockIndex && entry.startChar === moved.from && entry.endChar === moved.to) return entry
               changed = true
-              return { ...entry, blockIndex: moved.blockIndex, startChar: moved.from, endChar: moved.to, docKey: activeDocKey }
+              /* 只补空值，绝不把别的文档的批注改写成当前文档 —— 改写了就永久污染，重启也带着。 */
+              return { ...entry, blockIndex: moved.blockIndex, startChar: moved.from, endChar: moved.to, docKey: (typeof entry.docKey === 'string' && entry.docKey !== '') ? entry.docKey : activeDocKey }
             })
             if (changed) putItems(sessionId, next)
           } catch (error) {
