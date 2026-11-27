@@ -553,7 +553,14 @@ window.__ModuleLoader__.load({
     const subscribers = new Set()
     let state = null
 
-    const SCHEMA = 2
+    /* schema 3（0.112.0）：文档库按会话分桶 —— docs[sid][key]。旧的全局 docLibrary 原样保留一个版本，只读不写。 */
+    const SCHEMA = 3
+    /* 空库：固定一个引用，避免 useMemo 每拍失效。 */
+    const EMPTY_LIB = Object.freeze({})
+    /* 每个会话的文档库最多留几条（全文存在 localStorage，太多会撞配额）。 */
+    const DOCS_PER_SESSION = 40
+    /* 最多留几个会话的文档库（按最近一次入库时间）。 */
+    const DOCS_SESSIONS_MAX = 24
     const MAX_ITEMS_PER_BATCH = 12
     const MAX_CHARS_PER_BATCH = 8000
     const QUOTE_IN_MSG_MAX = 160
@@ -562,7 +569,7 @@ window.__ModuleLoader__.load({
     const TARGET_TTL = 60000
 
     function emptyState() {
-      return { schema: SCHEMA, batchSeq: 0, sessions: {}, open: false, active: null, undo: null, surface: null, debug: '', ui: null, collapsed: {}, docOpen: false, docPending: null, docToolbar: null, doc: null, docEditing: false, docThread: null, docThreadBox: null, docWide: false, docWideBox: null, docFloatBox: null, docDrawer: false, docDrawerW: 340, docPick: '', docView: null, docFont: 15, docFontLocal: false, docLibrary: {}, sentTail: '', sentTails: [], picked: {}, reanchorId: '', reanchorHint: '', autoDoc: true, autoDocLocal: false, hideDocBlocks: true, docSeen: '', onlyQueued: false, onlyLost: false, keepReplyWindow: 4, docFind: '', docFindAt: 0, docFindOpen: false, reactions: '', wideRightClick: true, dockDocTab: false, docDetached: false }
+      return { schema: SCHEMA, batchSeq: 0, sessions: {}, open: false, active: null, undo: null, surface: null, debug: '', ui: null, collapsed: {}, docOpen: false, docPending: null, docToolbar: null, doc: null, docEditing: false, docThread: null, docThreadBox: null, docWide: false, docWideBox: null, docFloatBox: null, docDrawer: false, docDrawerW: 340, docPick: '', docView: null, docFont: 15, docFontLocal: false, docs: {}, docLibraryLegacy: null, docMigration: null, sentTail: '', sentTails: [], picked: {}, reanchorId: '', reanchorHint: '', autoDoc: true, autoDocLocal: false, hideDocBlocks: true, docSeen: '', onlyQueued: false, onlyLost: false, keepReplyWindow: 4, docFind: '', docFindAt: 0, docFindOpen: false, reactions: '', wideRightClick: true, dockDocTab: false, docDetached: false }
     }
 
     /** 聊天引文可以压空白；文件引文必须逐字保留换行，否则模型定位不到原文。 */
@@ -793,23 +800,19 @@ window.__ModuleLoader__.load({
           /* 本地手动调过字号：设置页里的「默认字号」只当默认值，不再覆盖它。 */
           base.docFontLocal = true
         }
-        if (parsed.docLibrary !== null && typeof parsed.docLibrary === 'object') {
-          const library = {}
-          for (const [key, value] of Object.entries(parsed.docLibrary)) {
-            if (value === null || typeof value !== 'object') continue
-            if (typeof value.text !== 'string') continue
-            library[key] = {
-              title: typeof value.title === 'string' && value.title !== '' ? value.title : '未命名文档',
-              text: value.text,
-              at: typeof value.at === 'number' ? value.at : 0,
-              sid: typeof value.sid === 'string' ? value.sid : undefined,
-              /* 归属可信度：只有「文件键」或「本会话聊天里真的扫到过」才可信。
-                 旧数据里的聊天键一律先标不可信 —— 它们的 sid 可能早被别的会话改写（2026-11-27）。
-                 等到某个会话的聊天里重新扫到同样的正文，才会被标记为可信。 */
-              trusted: key.indexOf('file:') === 0 ? true : value.trusted === true,
-            }
-          }
-          base.docLibrary = library
+        /* 文档库（schema 3）：按会话分桶。
+           - 已经是 3：直接读 docs，旧 docLibrary 原样带着（下个版本再删）。
+           - 还是 2：从旧的全局 docLibrary 迁移一次（migrateDocLibrary，纯函数、幂等）。
+           旧字段一个字节都不改，回滚到 0.111.x 时它仍然能读到原来的库。 */
+        const legacyLib = parsed.docLibrary !== null && typeof parsed.docLibrary === 'object' ? parsed.docLibrary : null
+        base.docLibraryLegacy = legacyLib
+        if (Number(parsed.schema) >= 3 && parsed.docs !== null && typeof parsed.docs === 'object') {
+          base.docs = sanitizeDocs(parsed.docs)
+          base.docMigration = { from: 3, kept: 0, orphans: 0, skipped: true }
+        } else if (legacyLib !== null) {
+          const migrated = migrateDocLibrary(legacyLib)
+          base.docs = migrated.docs
+          base.docMigration = { from: Number(parsed.schema) || 2, kept: migrated.kept, orphans: migrated.orphans, skipped: false }
         }
         if (parsed.dockDocTab === true) base.dockDocTab = true
       if (parsed.docWideBox !== null && typeof parsed.docWideBox === 'object') {
@@ -942,7 +945,10 @@ window.__ModuleLoader__.load({
           doc: state.doc,
           docPick: state.docPick,
           docFont: state.docFont,
-          docLibrary: state.docLibrary,
+          /* schema 3：按会话分桶的文档库。 */
+          docs: state.docs,
+          /* 旧的全局库：只为回滚保留，原样写回、不再更新（0.113 起删除）。 */
+          ...(state.docLibraryLegacy !== null && state.docLibraryLegacy !== undefined ? { docLibrary: state.docLibraryLegacy } : {}),
           docWideBox: state.docWideBox,
           docFloatBox: state.docFloatBox,
           docThreadBox: state.docThreadBox,
@@ -1055,6 +1061,12 @@ window.__ModuleLoader__.load({
     }
 
     function putDoc(next, extra) {
+      /* 0.112：没有会话 id 的文档一律不收。sid 只能由来源（聊天扫描 / 磁盘目录 / 库桶）给出，
+         这里不补、不猜 —— 以前「没 sid 就认领给当前会话」正是串会话的入口之一。 */
+      if (next !== null && next !== undefined && (typeof next.sid !== 'string' || next.sid === '')) {
+        try { console.warn('[annotate] putDoc 拒收：文档没有 sid', String(next.key === undefined ? '' : next.key)) } catch (error) { /* 忽略 */ }
+        return
+      }
       if (sameDocShape(state.doc, next)) {
         /* 内容没变也要给写穿一个机会：重启后文档是从 localStorage 恢复的，
            这里若直接 return，磁盘上永远不会有文件。 */
@@ -1111,6 +1123,219 @@ window.__ModuleLoader__.load({
     function sessionTail(sessionId) {
       const raw = typeof sessionId === 'string' ? sessionId : ''
       return raw.replace(/^session-/u, '').slice(0, 8) || 'nosid'
+    }
+
+    /* ================= 文档归属（0.112.0）=================
+       文档库按会话分桶：state.docs[sid][key] = { title, text, at, sid, trusted }。
+       规则只有三条，全部在这里：
+         1. 读：一律经 libOf(sid)。结构上拿不到别的会话的条目，不再需要「这份是不是我的」判据。
+         2. 写：一律经 libCommit(sid, …)。sid 是写入方显式传进来的会话，不从条目里猜、也不改写。
+         3. 文件键 file:<尾巴>/<名> 只能放进尾巴等于 sessionTail(sid) 的那个桶。 */
+
+    /** 一条库条目整理成标准形状；坏条目返回 null。纯函数。 */
+    function sanitizeLibEntry(key, value, ownerSid) {
+      if (value === null || value === undefined || typeof value !== 'object') return null
+      if (typeof value.text !== 'string') return null
+      return {
+        title: typeof value.title === 'string' && value.title !== '' ? value.title : '未命名文档',
+        text: value.text,
+        at: typeof value.at === 'number' ? value.at : 0,
+        sid: ownerSid,
+        /* 文件键天然可信（目录就是归属）；聊天键要本会话聊天里真的扫到过才可信。 */
+        trusted: String(key).indexOf('file:') === 0 ? true : value.trusted === true,
+      }
+    }
+
+    /** 文件键属于哪个会话尾巴；不是文件键返回 ''。纯函数。 */
+    function fileKeyTail(key) {
+      const k = String(key === undefined || key === null ? '' : key)
+      if (k.indexOf('file:') !== 0) return ''
+      const at = k.indexOf('/', 5)
+      return at > 5 ? k.slice(5, at) : ''
+    }
+
+    /** 这条键能不能放进 sid 的桶：文件键看目录尾巴，聊天键只要 sid 有效。纯函数。 */
+    function keyFitsSession(key, sid) {
+      if (typeof sid !== 'string' || sid === '') return false
+      const tail = fileKeyTail(key)
+      if (String(key).indexOf('file:') === 0) return tail !== '' && tail === sessionTail(sid)
+      return String(key) !== ''
+    }
+
+    /**
+     * schema 2 → 3：把旧的全局 docLibrary 拆进各会话的桶。纯函数、幂等（同样的输入永远同样的输出）。
+     * - 条目没有 sid：进不了任何桶（孤儿）。它们仍留在旧字段里，回滚能找回。
+     * - 文件键的目录尾巴和 sid 对不上：说明 sid 被写串过 → 孤儿。
+     * - 聊天键：放进它记录的 sid 桶，可信标记原样保留（0.111 起旧聊天键默认不可信，不会显示）。
+     */
+    function migrateDocLibrary(legacy) {
+      const docs = {}
+      let kept = 0
+      let orphans = 0
+      if (legacy === null || legacy === undefined || typeof legacy !== 'object') return { docs, kept, orphans }
+      for (const [key, value] of Object.entries(legacy)) {
+        const sid = value !== null && value !== undefined && typeof value === 'object' && typeof value.sid === 'string' ? value.sid : ''
+        const entry = sid === '' ? null : sanitizeLibEntry(key, value, sid)
+        if (entry === null || keyFitsSession(key, sid) !== true) { orphans += 1; continue }
+        if (docs[sid] === undefined) docs[sid] = {}
+        docs[sid][key] = entry
+        kept += 1
+      }
+      return { docs, kept, orphans }
+    }
+
+    /** schema 3 的 docs 读回来时再过一遍：桶名必须是会话 id，键必须属于这个桶。纯函数。 */
+    function sanitizeDocs(raw) {
+      const docs = {}
+      if (raw === null || raw === undefined || typeof raw !== 'object') return docs
+      for (const [sid, bucket] of Object.entries(raw)) {
+        if (typeof sid !== 'string' || sid === '' || bucket === null || typeof bucket !== 'object') continue
+        const clean = {}
+        for (const [key, value] of Object.entries(bucket)) {
+          if (keyFitsSession(key, sid) !== true) continue
+          const entry = sanitizeLibEntry(key, value, sid)
+          if (entry !== null) clean[key] = entry
+        }
+        if (Object.keys(clean).length > 0) docs[sid] = clean
+      }
+      return docs
+    }
+
+    /** 桶太大就按 at 留最近 limit 条；keepKey 那条必留。纯函数。 */
+    function trimBucket(bucket, limit, keepKey) {
+      const entries = Object.entries(bucket).filter(([, v]) => v !== null && v !== undefined)
+      if (entries.length <= limit) return bucket
+      entries.sort((a, b) => Number(b[1].at || 0) - Number(a[1].at || 0))
+      const out = {}
+      entries.slice(0, limit).forEach(([k, v]) => { out[k] = v })
+      if (typeof keepKey === 'string' && keepKey !== '' && out[keepKey] === undefined && bucket[keepKey] !== undefined) {
+        out[keepKey] = bucket[keepKey]
+      }
+      return out
+    }
+
+    /** 会话太多就丢掉最久没动的桶；keepSid 必留。纯函数。 */
+    function trimDocs(docs, maxSessions, keepSid) {
+      const sids = Object.keys(docs)
+      if (sids.length <= maxSessions) return docs
+      const newest = (bucket) => Object.values(bucket).reduce((m, v) => Math.max(m, Number(v && v.at) || 0), 0)
+      sids.sort((a, b) => newest(docs[b]) - newest(docs[a]))
+      const out = {}
+      sids.slice(0, maxSessions).forEach(sid => { out[sid] = docs[sid] })
+      if (typeof keepSid === 'string' && keepSid !== '' && out[keepSid] === undefined && docs[keepSid] !== undefined) {
+        out[keepSid] = docs[keepSid]
+      }
+      return out
+    }
+
+    /** 唯一的读口：某个会话的文档库（只读，别改返回值）。 */
+    function libOf(sid) {
+      if (typeof sid !== 'string' || sid === '') return {}
+      const all = state === null || state === undefined || state.docs === null || state.docs === undefined ? {} : state.docs
+      const bucket = all[sid]
+      return bucket === null || bucket === undefined ? {} : bucket
+    }
+
+    /** 某会话库里的一条（看历史版 / 批注取标题都用它）。 */
+    function libEntryOf(sid, key) {
+      if (typeof key !== 'string' || key === '') return undefined
+      return libOf(sid)[key]
+    }
+
+    /**
+     * 唯一的写口：整桶替换 sid 的文档库。
+     * 放不进这个桶的键（别的会话目录的文件键）直接丢弃并记一笔 —— 结构上就写不串。
+     * extra：要和库一起原子提交的其它字段（如 doc / docPick）。
+     */
+    function libCommit(sid, bucket, extra, persistNow) {
+      if (typeof sid !== 'string' || sid === '') return
+      const clean = {}
+      let refused = 0
+      for (const [key, value] of Object.entries(bucket === null || bucket === undefined ? {} : bucket)) {
+        if (value === null || value === undefined) continue
+        if (keyFitsSession(key, sid) !== true) { refused += 1; continue }
+        clean[key] = { ...value, sid }
+      }
+      if (refused > 0) {
+        try { console.warn('[annotate] 文档库拒收 ' + String(refused) + ' 条不属于本会话的键 [' + sessionTail(sid) + ']') } catch (error) { /* 忽略 */ }
+      }
+      const keepKey = state.doc !== null && state.doc !== undefined && state.doc.sid === sid ? state.doc.key : ''
+      const all = { ...(state.docs === null || state.docs === undefined ? {} : state.docs) }
+      const trimmed = trimBucket(clean, DOCS_PER_SESSION, keepKey)
+      if (Object.keys(trimmed).length === 0) delete all[sid]
+      else all[sid] = trimmed
+      commit({ ...(extra === undefined ? {} : extra), docs: trimDocs(all, DOCS_SESSIONS_MAX, sid) }, persistNow === true)
+      if (persistNow !== true) schedulePersist()
+    }
+
+    /** 当前文档是否属于 sid：sid 必须一致；文件键还要求目录尾巴一致。纯函数。 */
+    function docBelongsTo(doc, sid) {
+      if (doc === null || doc === undefined || typeof sid !== 'string' || sid === '') return false
+      if (typeof doc.sid !== 'string' || doc.sid !== sid) return false
+      const key = typeof doc.key === 'string' ? doc.key : ''
+      if (key.indexOf('file:') === 0) return fileKeyTail(key) === sessionTail(sid)
+      return true
+    }
+
+    /** 诊断用：sid 只留前后各 4 位。 */
+    function sidBrief(sid) {
+      const raw = typeof sid === 'string' ? sid.replace(/^session-/u, '') : ''
+      if (raw === '') return '-'
+      return raw.length <= 8 ? raw : raw.slice(0, 4) + '…' + raw.slice(-4)
+    }
+
+    /** 诊断用：键只留前缀（不带正文）。 */
+    function keyBrief(key) {
+      const k = typeof key === 'string' ? key : ''
+      if (k === '') return '-'
+      return k.length <= 28 ? k : k.slice(0, 28) + '…'
+    }
+
+    /** 诊断两行：本会话桶 + 全局。纯函数，方便测。 */
+    function docDiagLines(docs, legacy, migration, sid, doc) {
+      const tail = sessionTail(sid)
+      const bucket = docs !== null && docs !== undefined && docs[sid] !== undefined ? docs[sid] : {}
+      let chat = 0
+      let file = 0
+      let trusted = 0
+      for (const [key, entry] of Object.entries(bucket)) {
+        if (String(key).indexOf('file:') === 0) file += 1
+        else chat += 1
+        if (entry !== null && entry !== undefined && entry.trusted !== false) trusted += 1
+      }
+      const total = chat + file
+      const active = doc === null || doc === undefined
+        ? 'active=(-, -)'
+        : 'active=(' + keyBrief(doc.key) + ', ' + sidBrief(doc.sid) + (docBelongsTo(doc, sid) ? '' : ' ≠本会话') + ')'
+      const line1 = '文档诊断 [' + tail + '] lib=聊天键' + String(chat) + '/文件键' + String(file)
+        + ' trusted=' + String(trusted) + '/' + String(total) + ' ' + active
+      const buckets = docs === null || docs === undefined ? {} : docs
+      const all = Object.values(buckets).reduce((n, b) => n + Object.keys(b || {}).length, 0)
+      const legacyCount = legacy === null || legacy === undefined ? 0 : Object.keys(legacy).length
+      const mig = migration === null || migration === undefined
+        ? '迁移=无'
+        : (migration.skipped === true ? '迁移=已是3' : '迁移=' + String(migration.from) + '→3 保留' + String(migration.kept) + ' 孤儿' + String(migration.orphans))
+      const line2 = '文档诊断 [' + tail + '] 全局 schema=' + String(SCHEMA) + ' 会话桶=' + String(Object.keys(buckets).length)
+        + ' 条目=' + String(all) + ' 旧库=' + String(legacyCount) + ' ' + mig
+      return [line1, line2]
+    }
+
+    const docDiagSent = new Set()
+    /** 每个会话首次加载文档时写两行诊断到 /annotate-log（不带正文）。 */
+    function sendDocDiag(sid) {
+      if (typeof sid !== 'string' || sid === '' || docDiagSent.has(sid)) return
+      docDiagSent.add(sid)
+      const lines = docDiagLines(state.docs, state.docLibraryLegacy, state.docMigration, sid, state.doc)
+      for (const text of lines) {
+        try { console.info('[annotate] ' + text) } catch (error) { /* 忽略 */ }
+        try {
+          fetch('/annotate-log', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ at: new Date().toISOString(), text }),
+          }).catch(() => {})
+        } catch (error) { /* 忽略 */ }
+      }
     }
 
     let docFileTimer
@@ -1201,7 +1426,8 @@ window.__ModuleLoader__.load({
       }
       const tail = 'file:' + sessionTail(sessionId) + '/'
       const present = new Set(items.map(it => String(it.file === undefined ? '' : it.file).replace(/\.md$/iu, '')))
-      const lib = state.docLibrary === undefined || state.docLibrary === null ? {} : state.docLibrary
+      /* 只动本会话自己的桶：别的会话的条目在结构上就不在这里。 */
+      const lib = libOf(sessionId)
       const next = {}
       let changed = false
       for (const [key, entry] of Object.entries(lib)) {
@@ -1211,7 +1437,7 @@ window.__ModuleLoader__.load({
         }
         next[key] = entry
       }
-      if (changed) commit({ docLibrary: next }, true)
+      if (changed) libCommit(sessionId, next, undefined, true)
       try {
         fetch('/annotate-log', {
           method: 'POST',
@@ -1700,7 +1926,7 @@ window.__ModuleLoader__.load({
         item.endChar = resolved.endChar
         /* 批注挂在哪一份文档上：看历史版时写它的 key 和标题，正文里只在那份上着色，发出去的也是那份的名字。 */
         const pickKey = typeof state.docPick === 'string' ? state.docPick : ''
-        const library = state.docLibrary === undefined || state.docLibrary === null ? {} : state.docLibrary
+        const library = libOf(sessionId)
         if (pickKey !== '' && library[pickKey] !== undefined) {
           item.docKey = pickKey
           if (typeof library[pickKey].title === 'string' && library[pickKey].title !== '') {
@@ -3042,8 +3268,7 @@ window.__ModuleLoader__.load({
          以前只认 target==='file'，文档批注（target==='doc'）全掉进「对话」，
          想找没发出去的预批注得在混在一起的列表里翻。 */
       const docTitleOf = (docKey) => {
-        const library = state.docLibrary === undefined || state.docLibrary === null ? {} : state.docLibrary
-        const found = library[docKey]
+        const found = libEntryOf(sessionId, docKey)
         if (found !== null && found !== undefined && typeof found.title === 'string' && found.title.trim() !== '') {
           return '📄 ' + found.title.trim()
         }
@@ -4243,7 +4468,7 @@ window.__ModuleLoader__.load({
 
     const DOC_PATH = '对话文档'
     /* 文档栏上会显示它：一眼看出跑的是不是刚改的那份客户端。 */
-    const PLUGIN_VERSION = '0.111.0'
+    const PLUGIN_VERSION = '0.112.0'
 
     /** 在聊天流里找最新一份 ```dsh-doc 围栏（助手输出的文档）。 */
     function scanDocBlocks() {
@@ -4970,10 +5195,7 @@ window.__ModuleLoader__.load({
     function liveDocBlocks(sessionId, pick) {
       const current = state === null || state === undefined ? null : state.doc
       if (typeof pick === 'string' && pick !== '') {
-        const library = state === null || state.docLibrary === undefined || state.docLibrary === null
-          ? null
-          : state.docLibrary
-        const entry = library === null ? undefined : library[pick]
+        const entry = state === null || state === undefined ? undefined : libEntryOf(sessionId, pick)
         return entry !== undefined && typeof entry.text === 'string' ? parseMarkdownDoc(entry.text) : []
       }
       if (current === null || current === undefined) return []
@@ -5529,9 +5751,7 @@ window.__ModuleLoader__.load({
         /* 看历史版时，线程卡里的「所在块」要从那一版的原文解析，不能拿最新那份的段落。 */
         const blocks = (() => {
           if (state.docPick !== '' && state.docPick !== undefined) {
-            const entry = state.docLibrary === undefined || state.docLibrary === null
-              ? undefined
-              : state.docLibrary[state.docPick]
+            const entry = libEntryOf(sessionId, state.docPick)
             if (entry !== undefined && typeof entry.text === 'string') return parseMarkdownDoc(entry.text)
           }
           return state.doc === null ? [] : state.doc.blocks
@@ -6155,16 +6375,21 @@ window.__ModuleLoader__.load({
          ① 文件键 file:<tail>/… 的 tail === 本会话尾巴；
          ② 聊天键（不以 file: 开头）必须显式带本会话 sid。
          以前对「没有 sid 的老数据」放行，结果这种文档在每个会话里都会显示。 */
-      const docKeyMine = docKeyRaw.indexOf('file:') === 0
-        ? docKeyRaw.indexOf(ownTail) === 0
-        : (typeof docSession === 'string' && docSession === sessionId)
+      /* 0.112：两条证据合成一个纯函数 docBelongsTo（sid 一致；文件键再要求目录尾巴一致）。 */
+      const docKeyMine = docBelongsTo(store.doc, sessionId)
+      void docKeyRaw
+      void docSession
       const docStored = store.doc !== null && store.doc !== undefined && docKeyMine
         ? store.doc
         : null
       const editing = store.docEditing === true && (store.docPick === '' || store.docPick === undefined)
       const fontSize = typeof store.docFont === 'number' ? store.docFont : 15
       const pick = typeof store.docPick === 'string' ? store.docPick : ''
-      const library = store.docLibrary === undefined || store.docLibrary === null ? {} : store.docLibrary
+      /* 只读本会话的桶（schema 3）：别的会话的文档结构上就不在这里。 */
+      const library = store.docs !== null && store.docs !== undefined && typeof sessionId === 'string'
+        && store.docs[sessionId] !== undefined && store.docs[sessionId] !== null
+        ? store.docs[sessionId]
+        : EMPTY_LIB
       /* 见过的文档都留在库里：聊天流里滚出去、折叠掉的也算，切回来还能看。按会话分开列。 */
       const docs = React.useMemo(() => Object.entries(library)
         .map(([key, value]) => ({ key, title: value.title, text: value.text, at: value.at, sid: value.sid, trusted: value.trusted }))
@@ -6200,7 +6425,8 @@ window.__ModuleLoader__.load({
       }, [docStored, library, sessionId])
       const doc = docStored !== null ? docStored : docFallback
       /* 看历史版时用「选中那一刻的快照」，不再每拍去库里找（找不到就会弹回最新，就是那个闪）。 */
-      const snapshot = store.docView === null || store.docView === undefined ? null : store.docView
+      /* 历史版快照也按会话隔离：A 会话里点开的历史版，切到 B 不能继续显示（快照带 sid，对不上就当没有）。 */
+      const snapshot = store.docView === null || store.docView === undefined || store.docView.sid !== sessionId ? null : store.docView
       const viewing = snapshot !== null && typeof snapshot.text === 'string'
         ? snapshot
         : (pick === '' ? null : (docs.find(entry => entry.key === pick) || null))
@@ -6399,6 +6625,8 @@ window.__ModuleLoader__.load({
       React.useEffect(() => {
         if (!open) return undefined
         let alive = true
+        /* 这个 effect 按 [open, sessionId] 重建：startedAt 就是「切进这个会话」的时刻。 */
+        const startedAt = Date.now()
         const load = () => {
           const scan = scanDocBlocks()
           if (!alive) return
@@ -6414,17 +6642,18 @@ window.__ModuleLoader__.load({
           /* 扫描到的每一份都进文档库（增量合并，只有真变了才写盘）。 */
           const scanned = Array.isArray(scan.list) ? scan.list : []
           if (scanned.length > 0) {
-            const currentLibrary = state.docLibrary === undefined || state.docLibrary === null ? {} : state.docLibrary
-            const nextLibrary = { ...currentLibrary }
+            /* schema 3：只写本会话自己的桶。键撞了也只会撞到本会话自己的条目，
+               不可能再把别的会话的文档「改名」到这里（0.111 之前全局键 + 覆盖 sid 就是这样串的）。 */
+            const nextLibrary = { ...libOf(sessionId) }
             let dirty = false
-            /* 只在本会话确实是当前会话时入库（切会话那一拍 DOM 可能还是旧的）。 */
-            const settled = runtime.lastSid === undefined || runtime.lastSid === null
-              || runtime.lastSid === sessionId
+            /* 只在本会话确实是当前会话、且切进来已满 900ms 时入库：切会话那一两拍 DOM 可能还是旧会话的。 */
+            const settled = (runtime.lastSid === undefined || runtime.lastSid === null
+              || runtime.lastSid === sessionId) && Date.now() - startedAt >= 900
             for (const entry of scanned) {
               if (settled !== true) continue
               const prev = nextLibrary[entry.key]
               if (prev !== undefined && prev.text === entry.text && prev.title === entry.title) {
-                /* 内容没变：只补「可信」标记，绝不动它原来的 sid。 */
+                /* 内容没变：只补「可信」标记。 */
                 if (prev.trusted !== true) { nextLibrary[entry.key] = { ...prev, trusted: true }; dirty = true }
                 continue
               }
@@ -6432,51 +6661,36 @@ window.__ModuleLoader__.load({
                 title: entry.title,
                 text: entry.text,
                 at: Date.now(),
-                /* **绝不覆盖已有的 sid**：覆盖就等于把别的会话的文档偷到自己名下。 */
-                sid: (prev !== undefined && typeof prev.sid === 'string' && prev.sid !== '') ? prev.sid : sessionId,
+                sid: sessionId,
                 trusted: true,
               }
               dirty = true
             }
-            if (dirty) {
-              /* 库不能无限长：每份文档都是全文，久了 persist() 越写越慢、还容易撞 localStorage 配额。
-                 按 at 留最近 40 条（本会话正在看的那条必留）。 */
-              const entries = Object.entries(nextLibrary)
-                .filter(([, value]) => value !== null && value !== undefined)
-                .sort((a, b) => Number(b[1].at === undefined ? 0 : b[1].at) - Number(a[1].at === undefined ? 0 : a[1].at))
-              const keepActive = state.doc === null || state.doc === undefined ? null : state.doc.key
-              const trimmed = {}
-              entries.slice(0, 40).forEach(([key, value]) => { trimmed[key] = value })
-              if (typeof keepActive === 'string' && keepActive !== '' && trimmed[keepActive] === undefined) {
-                const found = entries.find(pair => pair[0] === keepActive)
-                if (found !== undefined) trimmed[found[0]] = found[1]
-              }
-              commit({ docLibrary: trimmed })
-              schedulePersist()
-            }
+            if (dirty) libCommit(sessionId, nextLibrary)
           }
           /* 已经在看的这份如果还没入库（旧数据、块被折叠掉了），用存下来的原文补一条。 */
           const active = state.doc
           if (active !== null && typeof active.source === 'string' && active.source !== '') {
             const activeKey = typeof active.key === 'string' && active.key !== '' ? active.key : 'saved'
-            const currentLibrary = state.docLibrary === undefined || state.docLibrary === null ? {} : state.docLibrary
-            if (currentLibrary[activeKey] === undefined) {
+            const currentLibrary = libOf(sessionId)
+            /* 只给「确实属于本会话」的文档补条目；别的会话的不碰（tick 会先把它放下）。 */
+            if (docBelongsTo(active, sessionId) && currentLibrary[activeKey] === undefined) {
               const raw = [active.source]
                 .concat((Array.isArray(active.appends) ? active.appends : []).map(part => part.src))
                 .join('\n\n')
               const heading = /^#{1,6}\s*(.+)$/mu.exec(raw)
               const firstLine = raw.split('\n').filter(line => line.trim() !== '')[0] || '未命名文档'
-              commit({
-                docLibrary: {
-                  ...currentLibrary,
-                  [activeKey]: {
-                    title: (heading === null ? firstLine : heading[1]).replace(/[*`]/gu, '').trim().slice(0, 40),
-                    text: raw,
-                    at: Date.now(),
-                    sid: typeof active.sid === 'string' ? active.sid : sessionId,
-                  },
+              libCommit(sessionId, {
+                ...currentLibrary,
+                [activeKey]: {
+                  title: (heading === null ? firstLine : heading[1]).replace(/[*`]/gu, '').trim().slice(0, 40),
+                  text: raw,
+                  at: Date.now(),
+                  sid: sessionId,
+                  /* 本会话聊天采纳 / 本地编辑 / 文件来的才算可信；其它来源先不显示在库列表里。 */
+                  trusted: active.origin === 'chat' || active.local === true || String(activeKey).indexOf('file:') === 0,
                 },
-              }, true)
+              }, undefined, true)
             }
           }
           /* 正在本地编辑时不要覆盖用户的手改；其余时候跟聊天里的最新一版对齐。 */
@@ -6565,7 +6779,8 @@ window.__ModuleLoader__.load({
         /* 聊天的 DOM 是虚拟列表：往上滚远了，dsh-doc 那个代码块就不在文档流里了，扫不到。
            这时别让文档栏变成「还没有文档」—— 本会话在文档库里存着的那份就是它，拿出来接着用。 */
         const adoptFromLibrary = () => {
-          const lib = state.docLibrary === undefined || state.docLibrary === null ? {} : state.docLibrary
+          /* schema 3：只看本会话的桶。下面两道过滤保留作双保险（桶里本来就只有本会话的键）。 */
+          const lib = libOf(sessionId)
           /* 只认「属于本会话」的条目：file:<本会话尾巴>/... 或聊天键（不以 file: 开头）。
              以前只按 entry.sid 过滤，而 sid 被双实例时期写串过，别的会话目录的文件也能混进来 →
              面板在几份文档之间轮流跳（2026-11-27 日志实锤）。 */
@@ -6608,6 +6823,8 @@ window.__ModuleLoader__.load({
             appends: [],
             source: entry.text,
             editedAt: Date.now(),
+            /* 从库采纳：shouldWriteDoc 的白名单不含它，绝不落盘。 */
+            origin: 'library',
           })
         }
         const tick = () => {
@@ -6616,16 +6833,15 @@ window.__ModuleLoader__.load({
           if (runtime.lastSid !== undefined && runtime.lastSid !== null
             && runtime.lastSid !== sessionId && typeof runtime.lastSid === 'string') return
           runtime.docWhy = ''
+          /* 首次加载本会话文档前写两行诊断（每个会话一次，不带正文）。 */
+          sendDocDiag(sessionId)
           /* 磁盘上已经不存在的文档，不要把本地库里的残影继续显示出来。 */
           void purgeMissingDocs(sessionId)
           /* 面板里这份如果属于别的会话（按文件目录判），先放下：本会话的文档要么从聊天进来，
              要么从文档库 / 磁盘恢复。否则就会出现「这个会话的文档在别的会话窗口里」。 */
           if (state.doc !== null && state.doc !== undefined) {
-            const keyOfDoc = typeof state.doc.key === 'string' ? state.doc.key : ''
-            const sidOfDoc = typeof state.doc.sid === 'string' ? state.doc.sid : ''
-            const mine = keyOfDoc.indexOf('file:') === 0
-              ? keyOfDoc.indexOf(ownTail) === 0
-              : (sidOfDoc !== '' && sidOfDoc === sessionId)
+            /* 与渲染用同一个判据（docBelongsTo），不会出现「显示判 A、轮询判 B」。 */
+            const mine = docBelongsTo(state.doc, sessionId)
             if (!mine) commit({ doc: null, docPick: '', docView: null })
           }
           load()
@@ -7581,7 +7797,7 @@ window.__ModuleLoader__.load({
                       onClick: () => {
                         commit(newest.key === latestKey
                           ? { docPick: '', docView: null }
-                          : { docPick: newest.key, docView: { key: newest.key, text: newest.text, title: group.title } }, true)
+                          : { docPick: newest.key, docView: { key: newest.key, text: newest.text, title: group.title, sid: sessionId } }, true)
                         setNavOpen(false)
                       },
                     },
@@ -7615,7 +7831,7 @@ window.__ModuleLoader__.load({
                              以前只记 key，下一拍库里对不上就自动回最新，表现是「闪一下又跳回来」。 */
                           commit({
                             docPick: entry.key,
-                            docView: { key: entry.key, text: entry.text, title: group.title },
+                            docView: { key: entry.key, text: entry.text, title: group.title, sid: sessionId },
                           }, true)
                           setNavOpen(false)
                         },
@@ -7689,14 +7905,9 @@ window.__ModuleLoader__.load({
                       title: '只清空本会话的文档显示（磁盘文件留着，之后能读回来）',
                       onClick: (event) => {
                         event.stopPropagation()
-                        const lib = state.docLibrary === undefined || state.docLibrary === null ? {} : state.docLibrary
-                        const next = {}
-                        for (const [key, value] of Object.entries(lib)) {
-                          if (value !== null && value !== undefined && value.sid === sessionId) continue
-                          next[key] = value
-                        }
+                        /* 清空本会话自己的桶；别的会话的桶不受影响。 */
                         docFileTried.delete(sessionId)
-                        commit({ docLibrary: next, doc: null, docPick: '', docView: null }, true)
+                        libCommit(sessionId, {}, { doc: null, docPick: '', docView: null }, true)
                         restoreDocFromFile(sessionId)
                         setNavOpen(false)
                       },
@@ -7714,14 +7925,9 @@ window.__ModuleLoader__.load({
                             body: JSON.stringify({ sid: sessionId }),
                           }).catch(() => {})
                         } catch (error) { /* 删不掉就算了 */ }
-                        const lib = state.docLibrary === undefined || state.docLibrary === null ? {} : state.docLibrary
-                        const next = {}
-                        for (const [key, value] of Object.entries(lib)) {
-                          if (value !== null && value !== undefined && value.sid === sessionId) continue
-                          next[key] = value
-                        }
+                        /* 清空本会话自己的桶；别的会话的桶不受影响。 */
                         docFileTried.delete(sessionId)
-                        commit({ docLibrary: next, doc: null, docPick: '', docView: null }, true)
+                        libCommit(sessionId, {}, { doc: null, docPick: '', docView: null }, true)
                         setNavOpen(false)
                       },
                     }, '删本会话'),
@@ -8320,6 +8526,8 @@ window.__ModuleLoader__.load({
         sanitizeSvg, svgSizeOf, svgLabelOf, safeFileName, parseMarkdownDoc, docToMarkdown,
         shouldTakeFile, shouldAdopt, chatDocAction, annotationsToMarkdown, annotationsToCsv, typeIconOf, quoteInDocBlocks, docStampOf, anchorSpanFor, planWriteBack, asBlockquote, shouldReloadFile, shouldWriteDoc, tableRowsOf, splitTableRow, isTableDivider,
         encodeWav, resizeBox,
+        migrateDocLibrary, sanitizeDocs, keyFitsSession, fileKeyTail, docBelongsTo, trimBucket, trimDocs, docDiagLines, sidBrief,
+        libOf: (sid) => libOf(sid),
         stateOf: () => state,
       },
       apply(ctx) {

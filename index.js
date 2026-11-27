@@ -592,6 +592,15 @@ function registerDocRoute(ctx, config) {
               return
             }
             const tailHint = payload === null || typeof payload !== 'object' || typeof payload.tail !== 'string' ? '' : payload.tail
+            /* 0.112：只许写进写入者自己的会话目录。tail 指向别的会话 → 拒绝（409），
+               结构上杜绝「同一份文档在别人目录里长副本」。客户端从 0.112 起也不会再发这种请求。 */
+            if (/^[0-9a-z]{1,16}$/u.test(tailHint) && tailHint !== sessionTailOf(sid)) {
+              try {
+                ctx.logger?.warn?.(`[dsh-annotate] 拒绝跨会话写盘：sid=${sessionTailOf(sid)} tail=${tailHint}`)
+              } catch (logError) { /* 忽略 */ }
+              sendJson(res, 409, { ok: false, reason: 'cross-session', sid, tail: tailHint })
+              return
+            }
             const saved = await saveDoc(root, sid, title, text, payload === null || typeof payload !== 'object' ? '' : payload.fileName, tailHint)
             sendJson(res, 200, { ok: true, sid, title: saved.title, file: saved.file, path: saved.full, bytes: Buffer.byteLength(text) })
             return
