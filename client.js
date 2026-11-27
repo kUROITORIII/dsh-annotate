@@ -1136,6 +1136,14 @@ window.__ModuleLoader__.load({
               sid, title, text,
               /* 把这份文档的文件名一起带上：同名/无标题的两份按 title 路由会写错文件（0.101）。 */
               fileName: typeof doc.fileName === 'string' ? doc.fileName : '',
+              /* 从某个会话目录读来的文档，写回那个目录：只按 sid 落盘的话，sid 一旦写串就会
+                 在别的会话目录里长出副本（2026-11-27 实测同一份文档出现在 3 个目录）。 */
+              tail: (function () {
+                const k = typeof doc.key === 'string' ? doc.key : ''
+                if (k.indexOf('file:') !== 0) return ''
+                const at = k.indexOf('/', 5)
+                return at > 5 ? k.slice(5, at) : ''
+              })(),
             }),
           }).catch(() => {})
         } catch (error) { /* 落盘失败不影响主流程 */ }
@@ -4170,7 +4178,7 @@ window.__ModuleLoader__.load({
 
     const DOC_PATH = '对话文档'
     /* 文档栏上会显示它：一眼看出跑的是不是刚改的那份客户端。 */
-    const PLUGIN_VERSION = '0.110.1'
+    const PLUGIN_VERSION = '0.110.2'
 
     /** 在聊天流里找最新一份 ```dsh-doc 围栏（助手输出的文档）。 */
     function scanDocBlocks() {

@@ -332,8 +332,11 @@ async function pickName(dir, wanted) {
 }
 
 /** 写一份文档：进 `<root>/<会话尾8位>/<标题>.md`，返回落点。 */
-async function saveDoc(root, sessionId, title, text, fileName) {
-  const dir = path.join(root, sessionTailOf(sessionId))
+async function saveDoc(root, sessionId, title, text, fileName, tailHint) {
+  /* tailHint：文档是从某个会话目录读来的，就写回那个目录。
+     以前只按 sid 落目录，sid 一旦被写串，同一份文档就会在别的会话目录里长出一份副本。 */
+  const hinted = typeof tailHint === 'string' && /^[0-9a-z]{1,16}$/u.test(tailHint) ? tailHint : ''
+  const dir = path.join(root, hinted === '' ? sessionTailOf(sessionId) : hinted)
   await fs.mkdir(dir, { recursive: true })
   const meta = await readMeta(dir)
   meta.sid = String(sessionId === undefined || sessionId === null ? '' : sessionId)
@@ -583,7 +586,8 @@ function registerDocRoute(ctx, config) {
               sendJson(res, 400, { ok: false, reason: 'empty' })
               return
             }
-            const saved = await saveDoc(root, sid, title, text, payload === null || typeof payload !== 'object' ? '' : payload.fileName)
+            const tailHint = payload === null || typeof payload !== 'object' || typeof payload.tail !== 'string' ? '' : payload.tail
+            const saved = await saveDoc(root, sid, title, text, payload === null || typeof payload !== 'object' ? '' : payload.fileName, tailHint)
             sendJson(res, 200, { ok: true, sid, title: saved.title, file: saved.file, path: saved.full, bytes: Buffer.byteLength(text) })
             return
           }
