@@ -1452,6 +1452,17 @@ window.__ModuleLoader__.load({
      * 清掉本地文档库里「指向的文件已经不在磁盘上」的条目。
      * 背景：文档副本删掉后，localStorage 里的库条目还在，面板会继续显示它（2026-11-27）。
      * 每个会话每次启动只跑一次。 */
+    /** 往 ~/.dsh/annotate-client-debug.log 写一行（诊断用，失败静默）。 */
+    function logLine(text) {
+      try {
+        fetch('/annotate-log', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ at: new Date().toISOString(), text }),
+        }).catch(() => {})
+      } catch (error) { /* 忽略 */ }
+    }
+
     async function purgeMissingDocs(sessionId, force) {
       if (typeof sessionId !== 'string' || sessionId === '') return
       if (force !== true && runtime.docPurged[sessionId] === true) return
@@ -2819,6 +2830,15 @@ window.__ModuleLoader__.load({
         ? props.scope.sessionId
         : ''
       React.useEffect(() => {
+        /* 一次性诊断：顶栏按钮到底拿没拿到会话（拿到哪个槽位）。只记形状，不记内容。 */
+        if (runtime.docProbeOnce !== true) {
+          runtime.docProbeOnce = true
+          let keys = []
+          try { keys = Object.keys(props === null || props === undefined ? {} : props) } catch (error) { keys = ['取不到'] }
+          const scope = props !== null && props !== undefined && props.scope !== null && props.scope !== undefined
+            ? Object.keys(props.scope).join(',') : '-'
+          logLine('文档探针 [按钮] props键=' + keys.slice(0, 8).join('|') + ' scope键=' + scope + ' 取到sid=' + (liveSid === '' ? '无' : sessionTail(liveSid)))
+        }
         if (liveSid === '') return
         if (state.docSid === liveSid) return
         commit({ docSid: liveSid })
@@ -4519,7 +4539,7 @@ window.__ModuleLoader__.load({
 
     const DOC_PATH = '对话文档'
     /* 文档栏上会显示它：一眼看出跑的是不是刚改的那份客户端。 */
-    const PLUGIN_VERSION = '0.112.2'
+    const PLUGIN_VERSION = '0.112.3'
 
     /** 在聊天流里找最新一份 ```dsh-doc 围栏（助手输出的文档）。 */
     function scanDocBlocks() {
@@ -6413,6 +6433,15 @@ window.__ModuleLoader__.load({
       /* store.docSid = 顶栏「文档」按钮报上来的**当前会话**（切会话就会更新），比页签自己的
          scope.sessionId 可靠：页签是常驻的，scope 停在注册那一刻（2026-11-27）。 */
       const liveSid = typeof store.docSid === 'string' ? store.docSid : ''
+      React.useEffect(() => {
+        const tail = sessionTail(liveSid !== '' ? liveSid : scopeId)
+        const mine = store.docs !== null && store.docs !== undefined && typeof (liveSid !== '' ? liveSid : scopeId) === 'string'
+          ? (store.docs[liveSid !== '' ? liveSid : scopeId] || {}) : {}
+        logLine('文档面板挂载 kind=' + (embedded === true ? '页签' : (wide === true ? '窗口' : '其它'))
+          + ' 来源=' + (liveSid !== '' ? 'docSid' : (scopeId !== '' ? '页签scope' : 'active'))
+          + ' sid=' + tail + ' 我的库=' + String(Object.keys(mine).length) + ' 份'
+          + ' 全库=' + String(store.docs === null || store.docs === undefined ? 0 : Object.keys(store.docs).length) + '个会话')
+      }, [embedded, wide])
       const sessionId = liveSid !== ''
         ? liveSid
         : (scopeId !== ''
