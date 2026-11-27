@@ -13,6 +13,7 @@
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import zlib from 'node:zlib'
 import z from './vendor/schemastery.js'
 
 /** 设置页里每一个字段都要能“改完立刻生效”，所以全部 volatile。 */
@@ -423,7 +424,7 @@ async function listSessionDocs(root, sessionId, opts) {
         title: name,
         file: name,
         kind,
-        supported: P1_KINDS.has(kind),
+        supported: READABLE_KINDS.has(kind),
         bytes: stat.size,
         mtime: stat.mtimeMs,
       })
@@ -463,6 +464,8 @@ const FILE_KIND_BY_EXT = {
 }
 /** 本版真正能读的类型。 */
 const P1_KINDS = new Set(['md', 'txt', 'code', 'csv'])
+/** 0.116 起真正能读的类型（P1 四种 + xlsx）。 */
+const READABLE_KINDS = new Set([...P1_KINDS, 'xlsx'])
 /** 表格上限：超出截断并标 `caps.truncated`。 */
 const TABLE_MAX_ROWS = 5000
 const TABLE_MAX_COLS = 64
@@ -561,10 +564,327 @@ function resolveSessionFile(root, sessionId, rawPath) {
   return { ok: true, full, rel: parts.join('/'), tail, name }
 }
 
-/** 每种 kind 的能力位：P1 只有 md 能写回 / 导出。 */
+/** 每种 kind 的能力位：md 能写回 / 导出；xlsx（0.116）能导出批注，不能写回。 */
 function capsOf(kind) {
   if (kind === 'md') return { read: true, writeBack: true, export: true }
+  if (kind === 'xlsx') return { read: true, writeBack: false, export: true }
   return { read: true, writeBack: false, export: false }
+}
+
+/* ------------------------------------------------ 0.116 · P2：xlsx 只读解析（自写，不引第三方库） */
+
+/** 单个 zip 条目解压后的上限：防 zip 炸弹（8 MB 的 xlsx 解开一般远小于这个）。 */
+const XLSX_ENTRY_MAX = 64 * 1024 * 1024
+/** 最多读几张工作表。 */
+const XLSX_MAX_SHEETS = 32
+
+/**
+ * 读 zip 目录（只支持 stored / deflate，不支持 zip64 与加密），返回 Map<路径, () => Buffer>（按需解压）。
+ * 只用 `node:zlib` 的 inflateRawSync；不校验 CRC（只读预览，不往回写）。
+ */
+function readZip(buf) {
+  if (!Buffer.isBuffer(buf) || buf.length < 22) throw new Error('不是 zip 文件')
+  let eocd = -1
+  for (let i = buf.length - 22; i >= Math.max(0, buf.length - 65557); i -= 1) {
+    if (buf.readUInt32LE(i) === 0x06054b50) { eocd = i; break }
+  }
+  if (eocd < 0) throw new Error('不是 zip 文件（找不到目录尾）')
+  const count = buf.readUInt16LE(eocd + 10)
+  let at = buf.readUInt32LE(eocd + 16)
+  if (count === 0xffff || at === 0xffffffff) throw new Error('不支持 zip64')
+  const entries = new Map()
+  for (let n = 0; n < count; n += 1) {
+    if (at + 46 > buf.length || buf.readUInt32LE(at) !== 0x02014b50) throw new Error('zip 目录损坏')
+    const flags = buf.readUInt16LE(at + 8)
+    const method = buf.readUInt16LE(at + 10)
+    const compSize = buf.readUInt32LE(at + 20)
+    const size = buf.readUInt32LE(at + 24)
+    const nameLen = buf.readUInt16LE(at + 28)
+    const extraLen = buf.readUInt16LE(at + 30)
+    const commentLen = buf.readUInt16LE(at + 32)
+    const local = buf.readUInt32LE(at + 42)
+    const name = buf.slice(at + 46, at + 46 + nameLen).toString('utf8')
+    at += 46 + nameLen + extraLen + commentLen
+    if ((flags & 1) === 1) throw new Error('加密的 xlsx 不支持')
+    entries.set(name, () => {
+      if (local + 30 > buf.length || buf.readUInt32LE(local) !== 0x04034b50) throw new Error('zip 条目损坏：' + name)
+      const start = local + 30 + buf.readUInt16LE(local + 26) + buf.readUInt16LE(local + 28)
+      const raw = buf.slice(start, start + compSize)
+      if (method === 0) return raw
+      if (method !== 8) throw new Error('不支持的压缩方式 ' + String(method))
+      if (size > XLSX_ENTRY_MAX) throw new Error('条目太大：' + name)
+      return zlib.inflateRawSync(raw, { maxOutputLength: XLSX_ENTRY_MAX })
+    })
+  }
+  return entries
+}
+
+/** XML 实体解码（&amp; &lt; &gt; &quot; &apos; &#n; &#xh;）。 */
+function xmlDecode(text) {
+  return String(text === undefined || text === null ? '' : text).replace(/&(#x[0-9a-fA-F]+|#\d+|amp|lt|gt|quot|apos);/gu, (all, code) => {
+    if (code === 'amp') return '&'
+    if (code === 'lt') return '<'
+    if (code === 'gt') return '>'
+    if (code === 'quot') return '"'
+    if (code === 'apos') return "'"
+    const n = code[1] === 'x' ? parseInt(code.slice(2), 16) : parseInt(code.slice(1), 10)
+    return Number.isFinite(n) ? String.fromCodePoint(n) : all
+  })
+}
+
+/** 一个标签的属性表（忽略命名空间前缀：`r:id` 存成 `r:id` 与 `id` 两份）。 */
+function xmlAttrs(text) {
+  const out = {}
+  const re = /([\w:.-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/gu
+  let m = re.exec(text)
+  while (m !== null) {
+    const value = xmlDecode(m[2] !== undefined ? m[2] : m[3])
+    out[m[1]] = value
+    const colon = m[1].indexOf(':')
+    if (colon > 0 && out[m[1].slice(colon + 1)] === undefined) out[m[1].slice(colon + 1)] = value
+    m = re.exec(text)
+  }
+  return out
+}
+
+/** 富文本 / 内联字符串：把 `<t>` 拼起来，跳过注音 `<rPh>`。 */
+function xmlTexts(fragment) {
+  const body = String(fragment).replace(/<rPh\b[\s\S]*?<\/rPh>/gu, '')
+  let out = ''
+  const re = /<t\b[^>]*>([\s\S]*?)<\/t>/gu
+  let m = re.exec(body)
+  while (m !== null) {
+    out += xmlDecode(m[1])
+    m = re.exec(body)
+  }
+  return out
+}
+
+/** `B3` → { row:2, col:1 }（从 0 起）；坏输入 → null。 */
+function cellRefToRC(ref) {
+  const m = /^\$?([A-Z]{1,3})\$?(\d{1,7})$/u.exec(String(ref).toUpperCase())
+  if (m === null) return null
+  let col = 0
+  for (const ch of m[1]) col = col * 26 + (ch.charCodeAt(0) - 64)
+  return { row: Number(m[2]) - 1, col: col - 1 }
+}
+
+/** 内置数字格式里哪些是日期 / 时间（ECMA-376 18.8.30）。 */
+const XLSX_DATE_FMT_IDS = new Set([14, 15, 16, 17, 18, 19, 20, 21, 22, 27, 30, 36, 45, 46, 47, 50, 57])
+
+/** 自定义格式串是不是日期：去掉引号里的字面量和 [颜色] 之后还含 y / d，或含 m 且同时有 h/s。 */
+function isDateFormatCode(code) {
+  const plain = String(code === undefined || code === null ? '' : code)
+    .replace(/"[^"]*"/gu, '').replace(/\[[^\]]*\]/gu, '').replace(/\\./gu, '').toLowerCase()
+  if (/[yd]/u.test(plain)) return true
+  return /m/u.test(plain) && /[hs]/u.test(plain)
+}
+
+/** Excel 序列号 → `YYYY-MM-DD`（有时间部分就加 ` HH:MM`）。date1904 为 true 时以 1904-01-01 为 0。 */
+function excelSerialToDate(serial, date1904) {
+  const n = Number(serial)
+  if (!Number.isFinite(n)) return String(serial)
+  const base = date1904 === true ? Date.UTC(1904, 0, 1) : Date.UTC(1899, 11, 30)
+  const ms = Math.round(n * 86400000)
+  const d = new Date(base + ms)
+  const pad = v => String(v).padStart(2, '0')
+  const day = String(d.getUTCFullYear()) + '-' + pad(d.getUTCMonth() + 1) + '-' + pad(d.getUTCDate())
+  const secs = Math.round((n - Math.floor(n)) * 86400)
+  if (secs === 0 || secs === 86400) return day
+  return day + ' ' + pad(d.getUTCHours()) + ':' + pad(d.getUTCMinutes())
+}
+
+/** 解析一张 sheet 的 XML。返回 { rows, truncated, formulas?, merges? }。 */
+function parseSheetXml(xml, shared, dateStyles, date1904, maxRows, maxCols) {
+  const grid = []
+  const formulas = {}
+  const sharedFormulas = {}
+  let truncated = false
+  let width = 0
+  let autoRow = -1
+  const rowRe = /<row\b([^>]*?)(?:\/>|>([\s\S]*?)<\/row>)/gu
+  let rm = rowRe.exec(xml)
+  while (rm !== null) {
+    const rowAttrs = xmlAttrs(rm[1])
+    const rowIndex = rowAttrs.r !== undefined && /^\d+$/u.test(rowAttrs.r) ? Number(rowAttrs.r) - 1 : autoRow + 1
+    autoRow = rowIndex
+    const inner = rm[2] === undefined ? '' : rm[2]
+    rm = rowRe.exec(xml)
+    if (rowIndex >= maxRows) { truncated = true; continue }
+    let autoCol = -1
+    const cellRe = /<c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/c>)/gu
+    let cm = cellRe.exec(inner)
+    while (cm !== null) {
+      const attrs = xmlAttrs(cm[1])
+      const body = cm[2] === undefined ? '' : cm[2]
+      cm = cellRe.exec(inner)
+      const pos = attrs.r !== undefined ? cellRefToRC(attrs.r) : null
+      const col = pos === null ? autoCol + 1 : pos.col
+      autoCol = col
+      if (col >= maxCols) { truncated = true; continue }
+      const vMatch = /<v\b[^>]*>([\s\S]*?)<\/v>/u.exec(body)
+      const raw = vMatch === null ? '' : xmlDecode(vMatch[1])
+      const type = attrs.t === undefined ? 'n' : attrs.t
+      let value = ''
+      if (type === 's') {
+        const idx = Number(raw)
+        value = Number.isInteger(idx) && idx >= 0 && idx < shared.length ? shared[idx] : ''
+      } else if (type === 'inlineStr') {
+        const is = /<is\b[^>]*>([\s\S]*?)<\/is>/u.exec(body)
+        value = is === null ? '' : xmlTexts(is[1])
+      } else if (type === 'b') {
+        value = raw === '1' ? 'TRUE' : (raw === '0' ? 'FALSE' : raw)
+      } else if (type === 'str' || type === 'e' || type === 'd') {
+        value = raw
+      } else if (raw !== '') {
+        const style = attrs.s !== undefined ? Number(attrs.s) : 0
+        /* 非日期数字去掉二进制浮点尾巴（12.500000000000002 → 12.5），15 位有效数字和 Excel 显示一致。 */
+        const num = Number(raw)
+        value = dateStyles.has(style)
+          ? excelSerialToDate(raw, date1904)
+          : (Number.isFinite(num) ? String(Number(num.toPrecision(15))) : raw)
+      }
+      /* 公式：只取缓存值（<v>），公式原文另放 formulas，不评估。共享公式的从属格没有原文，标出来源。 */
+      const fMatch = /<f\b([^>]*?)(?:\/>|>([\s\S]*?)<\/f>)/u.exec(body)
+      const ref = colName(col) + String(rowIndex + 1)
+      if (fMatch !== null) {
+        const fAttrs = xmlAttrs(fMatch[1])
+        const text = fMatch[2] === undefined ? '' : xmlDecode(fMatch[2])
+        if (text !== '') {
+          formulas[ref] = '=' + text
+          if (fAttrs.t === 'shared' && fAttrs.si !== undefined) sharedFormulas[fAttrs.si] = { text, ref }
+        } else if (fAttrs.t === 'shared' && fAttrs.si !== undefined && sharedFormulas[fAttrs.si] !== undefined) {
+          formulas[ref] = '=' + sharedFormulas[fAttrs.si].text + '（共享自 ' + sharedFormulas[fAttrs.si].ref + '）'
+        }
+      }
+      while (grid.length <= rowIndex) grid.push([])
+      grid[rowIndex][col] = value
+      if (col + 1 > width) width = col + 1
+    }
+  }
+  /* 合并单元格：只在左上角留值，其余清空；区域列表原样给出（裁到上限内）。 */
+  const merges = []
+  const mergeRe = /<mergeCell\b([^>]*?)\/?>/gu
+  let mm = mergeRe.exec(xml)
+  while (mm !== null) {
+    const range = xmlAttrs(mm[1]).ref
+    mm = mergeRe.exec(xml)
+    if (typeof range !== 'string') continue
+    const [a, b] = range.split(':')
+    const from = cellRefToRC(a)
+    const to = cellRefToRC(b === undefined ? a : b)
+    if (from === null || to === null) continue
+    if (from.row >= maxRows || from.col >= maxCols) continue
+    merges.push(range)
+    for (let r = from.row; r <= Math.min(to.row, maxRows - 1); r += 1) {
+      for (let c = from.col; c <= Math.min(to.col, maxCols - 1); c += 1) {
+        if (r === from.row && c === from.col) continue
+        if (grid[r] !== undefined && grid[r][c] !== undefined) grid[r][c] = ''
+      }
+    }
+  }
+  const rows = grid.map((line) => {
+    const out = []
+    for (let c = 0; c < width; c += 1) out.push(line[c] === undefined ? '' : String(line[c]))
+    return out
+  })
+  const sheet = { rows }
+  if (truncated) sheet.truncated = true
+  if (Object.keys(formulas).length > 0) sheet.formulas = formulas
+  if (merges.length > 0) sheet.merges = merges
+  return sheet
+}
+
+/** 列序号 → 列名（0→A）。和客户端 colLetters 同一规则。 */
+function colName(col) {
+  let n = col + 1
+  let out = ''
+  while (n > 0) {
+    const r = (n - 1) % 26
+    out = String.fromCharCode(65 + r) + out
+    n = Math.floor((n - 1) / 26)
+  }
+  return out
+}
+
+/**
+ * xlsx → `{ type:'workbook', sheets:[{ name, rows, truncated?, formulas?, merges? }] }`。
+ * 读：workbook.xml（表名与顺序、date1904）、workbook.xml.rels（表 → 文件）、sharedStrings.xml、styles.xml（哪些样式是日期）。
+ * 解析不了就抛错（调用方回 415 parse-failed）。
+ */
+function parseXlsx(buf, maxRows, maxCols) {
+  const rowLimit = Number.isFinite(maxRows) && maxRows > 0 ? Math.floor(maxRows) : TABLE_MAX_ROWS
+  const colLimit = Number.isFinite(maxCols) && maxCols > 0 ? Math.floor(maxCols) : TABLE_MAX_COLS
+  const zip = readZip(buf)
+  /* 有的生成器给标签带命名空间前缀（<x:c>、<x:row>）：读入时去掉标签名前缀，属性（r:id、xml:space）不动。 */
+  const text = (name) => {
+    const get = zip.get(name)
+    return get === undefined ? null : get().toString('utf8').replace(/<(\/?)[A-Za-z_][\w.-]*:(?=[A-Za-z_])/gu, '<$1')
+  }
+  const workbook = text('xl/workbook.xml')
+  if (workbook === null) throw new Error('缺少 xl/workbook.xml')
+  const date1904 = /<workbookPr\b[^>]*\bdate1904\s*=\s*["'](1|true)["']/u.test(workbook)
+  const rels = {}
+  const relsXml = text('xl/_rels/workbook.xml.rels') || ''
+  const relRe = /<Relationship\b([^>]*?)\/?>/gu
+  let rm = relRe.exec(relsXml)
+  while (rm !== null) {
+    const a = xmlAttrs(rm[1])
+    if (a.Id !== undefined && a.Target !== undefined) rels[a.Id] = a.Target
+    rm = relRe.exec(relsXml)
+  }
+  const shared = []
+  const sharedXml = text('xl/sharedStrings.xml')
+  if (sharedXml !== null) {
+    const siRe = /<si\b[^>]*?(?:\/>|>([\s\S]*?)<\/si>)/gu
+    let sm = siRe.exec(sharedXml)
+    while (sm !== null) {
+      shared.push(sm[1] === undefined ? '' : xmlTexts(sm[1]))
+      sm = siRe.exec(sharedXml)
+    }
+  }
+  /* 日期样式：cellXfs 第 n 个 xf 的 numFmtId 是内置日期格式，或指向一个日期样子的自定义格式。 */
+  const dateStyles = new Set()
+  const stylesXml = text('xl/styles.xml')
+  if (stylesXml !== null) {
+    const custom = {}
+    const fmtRe = /<numFmt\b([^>]*?)\/?>/gu
+    let fm = fmtRe.exec(stylesXml)
+    while (fm !== null) {
+      const a = xmlAttrs(fm[1])
+      if (a.numFmtId !== undefined) custom[Number(a.numFmtId)] = a.formatCode
+      fm = fmtRe.exec(stylesXml)
+    }
+    const xfs = /<cellXfs\b[^>]*>([\s\S]*?)<\/cellXfs>/u.exec(stylesXml)
+    if (xfs !== null) {
+      const xfRe = /<xf\b([^>]*?)(?:\/>|>)/gu
+      let xm = xfRe.exec(xfs[1])
+      let index = 0
+      while (xm !== null) {
+        const id = Number(xmlAttrs(xm[1]).numFmtId)
+        if (XLSX_DATE_FMT_IDS.has(id) || (custom[id] !== undefined && isDateFormatCode(custom[id]))) dateStyles.add(index)
+        index += 1
+        xm = xfRe.exec(xfs[1])
+      }
+    }
+  }
+  const sheets = []
+  const sheetRe = /<sheet\b([^>]*?)\/?>/gu
+  let sh = sheetRe.exec(workbook)
+  while (sh !== null && sheets.length < XLSX_MAX_SHEETS) {
+    const a = xmlAttrs(sh[1])
+    sh = sheetRe.exec(workbook)
+    const target = rels[a['r:id']] !== undefined ? rels[a['r:id']] : rels[a.id]
+    if (typeof target !== 'string') continue
+    /* Target 可以是相对 xl/ 的（worksheets/sheet1.xml）或绝对的（/xl/worksheets/sheet1.xml）。 */
+    const file = target.startsWith('/') ? target.slice(1) : path.posix.normalize('xl/' + target)
+    const xml = text(file)
+    if (xml === null) continue
+    sheets.push({ name: typeof a.name === 'string' && a.name !== '' ? a.name : 'Sheet' + String(sheets.length + 1),
+      ...parseSheetXml(xml, shared, dateStyles, date1904, rowLimit, colLimit) })
+  }
+  if (sheets.length === 0) throw new Error('没有可读的工作表')
+  return { type: 'workbook', sheets }
 }
 
 /**
@@ -583,10 +903,21 @@ async function readSessionFile(root, sessionId, rawPath) {
   if (stat.isFile() !== true) return { status: 404, body: { ok: false, reason: 'missing' } }
   const kind = fileKindOf(resolved.name)
   const head = { kind, mtime: stat.mtimeMs, bytes: stat.size, title: safeSegment(resolved.name, 120) || resolved.name, file: resolved.name }
-  if (P1_KINDS.has(kind) !== true) {
+  if (READABLE_KINDS.has(kind) !== true) {
     return { status: 415, body: { ok: false, reason: 'unsupported', ...head, caps: { read: false, writeBack: false, export: false } } }
   }
   if (stat.size > MAX_DOC_BYTES) return { status: 413, body: { ok: false, reason: 'too-large', ...head } }
+  if (kind === 'xlsx') {
+    /* 0.116：xlsx 只读解析。坏文件 / .xls（老二进制格式）/ zip64 → 415 parse-failed，客户端说「解析不了」。 */
+    let model = null
+    try {
+      model = parseXlsx(await fs.readFile(resolved.full), TABLE_MAX_ROWS, TABLE_MAX_COLS)
+    } catch (error) {
+      return { status: 415, body: { ok: false, reason: 'parse-failed', ...head, message: error instanceof Error ? error.message : String(error) } }
+    }
+    const truncated = model.sheets.some(sheet => sheet.truncated === true)
+    return { status: 200, body: { ok: true, ...head, model, caps: { ...capsOf(kind), truncated } } }
+  }
   const text = await fs.readFile(resolved.full, 'utf8')
   if (kind === 'csv') {
     const parsed = parseCsv(text, TABLE_MAX_ROWS, TABLE_MAX_COLS)
@@ -602,7 +933,7 @@ async function readSessionFile(root, sessionId, rawPath) {
  * 注册 `/annotate-file`（0.115 新增，不动 `/annotate-doc/*`）。
  *
  * GET /annotate-file?sid=&path=      → 200 { ok, kind, mtime, bytes, title, text?, model?, caps }
- *                                     → 404 missing / 409 cross-session / 415 unsupported / 413 too-large
+ *                                     → 404 missing / 409 cross-session / 415 unsupported 或 parse-failed（xlsx 坏文件，0.116） / 413 too-large
  * GET /annotate-file/list?sid=       → 本会话目录里的非 .md 文件 { ok, items:[{ file, kind, supported, bytes, mtime }] }
  */
 function registerFileRoute(ctx, config) {

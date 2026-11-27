@@ -393,6 +393,14 @@ window.__ModuleLoader__.load({
 .dsha-tv td[data-status="sent"]{background:rgba(77,107,254,.30)}
 .dsha-tv td[data-status="answered"]{background:rgba(60,190,120,.28)}
 .dsha-tv-foot{padding:6px 2px;font-size:11px;color:var(--dsw-alias-label-secondary)}
+.dsha-tv-fx{display:inline-block;margin-right:4px;font-size:10px;font-style:italic;color:#8aa0ff;cursor:help}
+.dsha-wb{display:flex;flex-direction:column;min-height:0}
+.dsha-wb-tabs{display:flex;flex-wrap:wrap;gap:4px;margin:0 0 8px}
+.dsha-wb-count{margin-left:5px;padding:0 5px;border-radius:8px;font-size:10px;background:rgba(77,107,254,.30)}
+.dsha-export-wrap{position:relative;display:inline-flex}
+.dsha-export-menu{position:absolute;top:100%;left:0;margin-top:4px;min-width:210px;padding:4px;border-radius:8px;z-index:6;
+  background:var(--dsw-alias-bg-layer-2,#2a2a2e);border:1px solid var(--dsw-alias-border-l1);box-shadow:0 6px 18px rgba(0,0,0,.25)}
+.dsha-export-menu button{display:block;width:100%;text-align:left;margin:2px 0}
 
 .dsha-doc-span[data-status="queued"]{background:rgba(77,107,254,.20);
   box-shadow:inset 0 -2px 0 rgba(77,107,254,.75)}
@@ -1342,6 +1350,12 @@ window.__ModuleLoader__.load({
         mix(typeof doc.fileText === 'string' ? doc.fileText : '')
         const rows = doc.model !== null && doc.model !== undefined && Array.isArray(doc.model.rows) ? doc.model.rows : []
         mix(String(rows.length) + 'x' + String(rows.length === 0 ? 0 : rows[0].length) + '@' + String(doc.fileMtime || 0))
+        /* 0.116：工作簿看每张表的名字与尺寸。 */
+        const sheets = doc.model !== null && doc.model !== undefined && Array.isArray(doc.model.sheets) ? doc.model.sheets : []
+        for (const sheet of sheets) {
+          const sr = Array.isArray(sheet.rows) ? sheet.rows : []
+          mix('|' + String(sheet.name) + ':' + String(sr.length) + 'x' + String(sr.length === 0 ? 0 : sr[0].length))
+        }
       }
       return [
         String(doc.sid === undefined || doc.sid === null ? '' : doc.sid),
@@ -1884,10 +1898,27 @@ window.__ModuleLoader__.load({
       }
       if (one.ok !== true) {
         doc.unsupported = true
+        /* 0.116：xlsx 认得但这一份解析不了（坏文件 / 老 .xls / zip64）。 */
+        if (one.reason === 'parse-failed') doc.parseFailed = true
         return doc
       }
+      const cleanRows = rows => (Array.isArray(rows) ? rows : []).map(row => (Array.isArray(row) ? row.map(cell => String(cell)) : []))
       if (one.model !== null && one.model !== undefined && one.model.type === 'table' && Array.isArray(one.model.rows)) {
-        doc.model = { type: 'table', rows: one.model.rows.map(row => (Array.isArray(row) ? row.map(cell => String(cell)) : [])) }
+        doc.model = { type: 'table', rows: cleanRows(one.model.rows) }
+      } else if (one.model !== null && one.model !== undefined && one.model.type === 'workbook' && Array.isArray(one.model.sheets)) {
+        doc.model = {
+          type: 'workbook',
+          sheets: one.model.sheets.map((sheet, index) => {
+            const out = {
+              name: typeof sheet.name === 'string' && sheet.name !== '' ? sheet.name : 'Sheet' + String(index + 1),
+              rows: cleanRows(sheet.rows),
+            }
+            if (sheet.truncated === true) out.truncated = true
+            if (sheet.formulas !== null && typeof sheet.formulas === 'object') out.formulas = { ...sheet.formulas }
+            if (Array.isArray(sheet.merges)) out.merges = sheet.merges.map(String)
+            return out
+          }),
+        }
       } else {
         doc.fileText = typeof one.text === 'string' ? one.text : ''
       }
@@ -1931,6 +1962,15 @@ window.__ModuleLoader__.load({
           if (!Array.isArray(row)) return
           row.forEach((ignored, c) => out.push({ kind: 'cell', text: cellQuote(rows, r, c) }))
         })
+      } else if (doc.model !== null && doc.model !== undefined && Array.isArray(doc.model.sheets)) {
+        /* 0.116：工作簿每张表的每个单元格一块，正文带表名（`Sheet1!B3: 值`），值本身仍能被逐字找到。 */
+        for (const sheet of doc.model.sheets) {
+          const rows = Array.isArray(sheet.rows) ? sheet.rows : []
+          rows.forEach((row, r) => {
+            if (!Array.isArray(row)) return
+            row.forEach((ignored, c) => out.push({ kind: 'cell', text: String(sheet.name) + '!' + cellQuote(rows, r, c) }))
+          })
+        }
       } else if (typeof doc.fileText === 'string' && doc.fileText !== '') {
         out = [{ kind: 'pre', text: doc.fileText }]
       }
@@ -2318,6 +2358,73 @@ window.__ModuleLoader__.load({
         out.push([index + 1, where, entry.status, entry.quote, entry.note, entry.reply].map(cell).join(','))
       })
       return out.join('\r\n')
+    }
+
+    /** 批注状态 → 导出里给人看的中文。 */
+    const STATUS_LABEL = { queued: '待发送', sent: '已发送', answered: '已回复', resolved: '已解决' }
+
+    /** 这条批注是不是挂在这份文件的单元格上（先认 ref.fileKey，旧条目认 docKey）。 */
+    function isCellAnnotationOf(entry, docKey) {
+      if (entry === null || entry === undefined || entry.target !== 'doc') return false
+      const loc = entry.locator
+      if (loc === null || loc === undefined || loc.kind !== 'cell') return false
+      const key = entry.ref !== null && entry.ref !== undefined && typeof entry.ref.fileKey === 'string' && entry.ref.fileKey !== ''
+        ? entry.ref.fileKey
+        : (typeof entry.docKey === 'string' ? entry.docKey : '')
+      return key !== '' && key === docKey
+    }
+
+    /**
+     * 0.116 · 表格批注导出（批注.csv）：列 `文件,工作表,单元格,值,批注,状态,回复`；
+     * 按工作表顺序 → 行 → 列 → 创建时间排序；UTF-8 带 BOM（Excel 直接双击不乱码）、CRLF、RFC 4180 转义。
+     * 「值」取文件里现在的值（读不到就用批注当时的引文）。
+     */
+    function cellAnnotationsToCsv(list, doc) {
+      const key = doc !== null && doc !== undefined && typeof doc.key === 'string' ? doc.key : ''
+      const name = doc !== null && doc !== undefined && typeof doc.fileName === 'string' ? doc.fileName : ''
+      const model = doc !== null && doc !== undefined ? doc.model : null
+      const sheets = model !== null && model !== undefined && Array.isArray(model.sheets)
+        ? model.sheets
+        : [{ name: '', rows: model !== null && model !== undefined && Array.isArray(model.rows) ? model.rows : [] }]
+      const order = new Map(sheets.map((sheet, index) => [String(sheet.name), index]))
+      const rowsOf = sheetName => {
+        const hit = sheets.find(sheet => String(sheet.name) === sheetName)
+        return hit === undefined ? [] : hit.rows
+      }
+      const cell = (value) => {
+        const text = String(value === undefined || value === null ? '' : value)
+        return /[",\r\n]/u.test(text) || /^\s|\s$/u.test(text) ? '"' + text.replace(/"/gu, '""') + '"' : text
+      }
+      const picked = (Array.isArray(list) ? list : []).filter(entry => isCellAnnotationOf(entry, key))
+      picked.sort((a, b) => {
+        const sa = order.has(a.locator.sheet) ? order.get(a.locator.sheet) : 9999
+        const sb = order.has(b.locator.sheet) ? order.get(b.locator.sheet) : 9999
+        if (sa !== sb) return sa - sb
+        if (a.locator.row !== b.locator.row) return a.locator.row - b.locator.row
+        if (a.locator.col !== b.locator.col) return a.locator.col - b.locator.col
+        return String(a.createdAt).localeCompare(String(b.createdAt))
+      })
+      const out = [['文件', '工作表', '单元格', '值', '批注', '状态', '回复'].join(',')]
+      for (const entry of picked) {
+        const loc = entry.locator
+        const sheetName = typeof loc.sheet === 'string' ? loc.sheet : ''
+        const rows = rowsOf(sheetName)
+        const now = Array.isArray(rows) && Array.isArray(rows[loc.row]) && rows[loc.row][loc.col] !== undefined
+          ? String(rows[loc.row][loc.col])
+          : String(entry.quote === undefined ? '' : entry.quote)
+        const thread = Array.isArray(entry.thread) ? entry.thread : []
+        const lastAi = thread.filter(item => item !== null && item !== undefined && item.who === 'ai').slice(-1)[0]
+        const reply = typeof entry.reply === 'string' && entry.reply !== '' ? entry.reply : (lastAi === undefined ? '' : lastAi.text)
+        out.push([name, sheetName, cellLabel(loc.row, loc.col), now, entry.note,
+          STATUS_LABEL[entry.status] || String(entry.status || ''), reply].map(cell).join(','))
+      }
+      return '﻿' + out.join('\r\n') + '\r\n'
+    }
+
+    /** 导出文件名：`<原名去扩展> · 批注.csv`。 */
+    function cellExportName(fileName) {
+      const base = String(fileName === undefined || fileName === null ? '' : fileName).replace(/\.[^./\\]+$/u, '')
+      return (base === '' ? '表格' : base) + ' · 批注.csv'
     }
 
     /** 文档「看过了」的标记：内容戳（编辑时间 + 块数）变了才算新内容。 */
@@ -5270,7 +5377,7 @@ window.__ModuleLoader__.load({
 
     const DOC_PATH = '对话文档'
     /* 文档栏上会显示它：一眼看出跑的是不是刚改的那份客户端。 */
-    const PLUGIN_VERSION = '0.115.1'
+    const PLUGIN_VERSION = '0.116.0'
 
     /** 在聊天流里找最新一份 ```dsh-doc 围栏（助手输出的文档）。 */
     /** 测量包一层（7.2）：真实实现在 scanDocBlocksRaw。 */
@@ -7230,15 +7337,22 @@ window.__ModuleLoader__.load({
     function TableView(props) {
       const doc = props.doc
       const sessionId = props.sessionId
-      const rows = doc !== null && doc !== undefined && doc.model !== undefined && doc.model !== null && Array.isArray(doc.model.rows)
-        ? doc.model.rows
-        : []
+      /* 0.116：工作簿由 WorkbookView 直接传当前那张表的 rows；csv 仍从 doc.model.rows 取。 */
+      const rows = Array.isArray(props.rows)
+        ? props.rows
+        : (doc !== null && doc !== undefined && doc.model !== undefined && doc.model !== null && Array.isArray(doc.model.rows)
+          ? doc.model.rows
+          : [])
+      /* 0.116：工作簿里的一张表由 WorkbookView 传 sheet / formulas 进来；csv 两者都没有（sheet=''）。 */
+      const sheet = typeof props.sheet === 'string' ? props.sheet : ''
+      const formulas = props.formulas !== null && props.formulas !== undefined && typeof props.formulas === 'object' ? props.formulas : {}
       const [limit, setLimit] = React.useState(TABLE_PAGE_ROWS)
       const [selected, setSelected] = React.useState('')
       const byCell = new Map()
       for (const entry of (Array.isArray(props.marks) ? props.marks : [])) {
         const loc = entry.locator
         if (loc === null || loc === undefined || loc.kind !== 'cell') continue
+        if ((typeof loc.sheet === 'string' ? loc.sheet : '') !== sheet) continue
         const key = String(loc.row) + ':' + String(loc.col)
         const list = byCell.get(key)
         if (list === undefined) byCell.set(key, [entry])
@@ -7262,7 +7376,7 @@ window.__ModuleLoader__.load({
           startChar: 0,
           endChar: quote.length,
           quote,
-          locator: { kind: 'cell', sheet: '', row: r, col: c },
+          locator: { kind: 'cell', sheet, row: r, col: c },
         }
         runtime.targetAt = Date.now()
         const spot = {
@@ -7280,14 +7394,16 @@ window.__ModuleLoader__.load({
         const key = String(r) + ':' + String(c)
         const here = byCell.get(key)
         const newest = here === undefined ? null : here.slice().sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))[0]
+        const formula = typeof formulas[cellLabel(r, c)] === 'string' ? formulas[cellLabel(r, c)] : ''
         return h(tag, {
           key: String(c),
           'data-cell': key,
           'data-on': selected === key ? '1' : undefined,
           'data-status': here === undefined ? undefined : marksStatus(here),
-          title: cellLabel(r, c) + ' · 点一下写批注',
+          title: cellLabel(r, c) + (formula === '' ? '' : ' · ' + formula + '（显示的是缓存值）') + ' · 点一下写批注',
           onClick: event => openCell(event, r, c),
         },
+          formula === '' ? null : h('span', { className: 'dsha-tv-fx', title: formula }, 'ƒ'),
           value,
           newest === null
             ? null
@@ -7308,7 +7424,9 @@ window.__ModuleLoader__.load({
           h('td', { className: 'dsha-tv-rn' }, String(r + 1)),
           columns.map(c => cellOf('td', r, c))))
       }
-      const truncated = doc.caps !== null && doc.caps !== undefined && doc.caps.truncated === true
+      const truncated = typeof props.truncated === 'boolean'
+        ? props.truncated
+        : (doc.caps !== null && doc.caps !== undefined && doc.caps.truncated === true)
       return h('div', { className: 'dsha-tv-wrap' },
         h('table', { className: 'dsha-tv' },
           h('thead', null,
@@ -7329,8 +7447,57 @@ window.__ModuleLoader__.load({
             : null))
     }
 
-    /** 非 md 文件的派发：表格 → TableView；有正文 → 纯文本；其余 → 一句提示（不报错、不白屏）。 */
+    /**
+     * 0.116 · 工作簿视图（xlsx）：顶部工作表标签（多于 1 张才显示），切换只换 rows；
+     * 单元格渲染与 openCell 全部复用 TableView，locator.sheet 写表名。
+     * 每张表的批注数显示在标签上。
+     */
+    function WorkbookView(props) {
+      const doc = props.doc
+      const sheets = doc !== null && doc !== undefined && doc.model !== null && doc.model !== undefined && Array.isArray(doc.model.sheets)
+        ? doc.model.sheets
+        : []
+      const [active, setActive] = React.useState(0)
+      if (sheets.length === 0) return h('div', { className: 'dsha-file-tip' }, '这个工作簿里没有可读的工作表。')
+      const index = Math.max(0, Math.min(active, sheets.length - 1))
+      const current = sheets[index]
+      const marks = Array.isArray(props.marks) ? props.marks : []
+      const countOf = name => marks.filter(entry => entry.locator !== null && entry.locator !== undefined
+        && entry.locator.kind === 'cell' && entry.locator.sheet === name).length
+      return h('div', { className: 'dsha-wb' },
+        sheets.length > 1
+          ? h('div', { className: 'dsha-wb-tabs', role: 'tablist' },
+            sheets.map((sheet, order) => {
+              const count = countOf(sheet.name)
+              return h('button', {
+                key: String(order) + ':' + sheet.name,
+                type: 'button',
+                role: 'tab',
+                className: order === index ? 'dsha-mini dsha-mini-on' : 'dsha-mini',
+                'aria-selected': order === index ? 'true' : 'false',
+                title: sheet.name + ' · ' + String(sheet.rows.length) + ' 行' + (count > 0 ? ' · ' + String(count) + ' 条批注' : ''),
+                onClick: () => setActive(order),
+              }, sheet.name, count > 0 ? h('span', { className: 'dsha-wb-count' }, String(count)) : null)
+            }))
+          : null,
+        h(TableView, {
+          /* key 带表名：切表时 TableView 的分页与选中状态重置，不把上一张表的选中格带过来。 */
+          key: 'sheet:' + String(index) + ':' + current.name,
+          doc,
+          sessionId: props.sessionId,
+          marks,
+          sheet: current.name,
+          formulas: current.formulas,
+          truncated: current.truncated === true,
+          rows: current.rows,
+        }))
+    }
+
+    /** 非 md 文件的派发：表格 → TableView；工作簿 → WorkbookView；有正文 → 纯文本；其余 → 一句提示（不报错、不白屏）。 */
     function renderFileDoc(doc, sessionId, marks) {
+      if (doc.parseFailed === true) {
+        return h('div', { className: 'dsha-file-tip' }, '「' + String(doc.fileName || doc.title || '') + '」这个表格解析不了（文件可能损坏，或是老的 .xls 格式）。')
+      }
       if (doc.unsupported === true) {
         const label = { xlsx: 'Excel 表格', docx: 'Word 文档', pptx: '演示文稿', image: '图片' }[doc.fileKind] || '这种文件'
         return h('div', { className: 'dsha-file-tip' },
@@ -7341,6 +7508,9 @@ window.__ModuleLoader__.load({
       }
       if (doc.model !== null && doc.model !== undefined && doc.model.type === 'table') {
         return h(TableView, { doc, sessionId, marks })
+      }
+      if (doc.model !== null && doc.model !== undefined && doc.model.type === 'workbook') {
+        return h(WorkbookView, { key: 'wb:' + String(doc.key), doc, sessionId, marks })
       }
       return h(PlainFileView, { text: doc.fileText, kind: doc.fileKind, marks })
     }
@@ -7428,6 +7598,8 @@ window.__ModuleLoader__.load({
       /* 0.115：本会话目录里的非 md 文件（txt / 代码 / csv / 不支持的类型），列在文档清单下面。
          只读清单、不进文档库：库与写穿规则只管 Markdown（第 2 节那十条不动）。 */
       const [extraFiles, setExtraFiles] = React.useState([])
+      /* 0.116：表格文件的「导出」是个下拉（批注.csv / 改后.xlsx）；md 文档仍是一键复制。 */
+      const [exportOpen, setExportOpen] = React.useState(false)
       React.useEffect(() => {
         if (!open || typeof sessionId !== 'string' || sessionId === '') return undefined
         let alive = true
@@ -9192,7 +9364,40 @@ window.__ModuleLoader__.load({
             title: '在文档里查找（Enter 下一个，Shift+Enter 上一个）',
             onClick: () => commit({ docFindOpen: !findOpen, docFindAt: 0 }),
           }, '查找'),
-          h('button', {
+          (viewing === null && isFileDoc(doc) && doc.model !== null && doc.model !== undefined
+            && (doc.model.type === 'table' || doc.model.type === 'workbook'))
+            ? (() => {
+              const cellCount = itemsOf(sessionId).filter(entry => isCellAnnotationOf(entry, doc.key)).length
+              return h('div', { className: 'dsha-export-wrap' },
+                h('button', {
+                  type: 'button',
+                  className: exportOpen ? 'dsha-mini dsha-mini-on' : 'dsha-mini',
+                  title: '导出这份表格上的批注',
+                  onClick: () => setExportOpen(value => !value),
+                }, '导出 ▾'),
+                exportOpen
+                  ? h('div', { className: 'dsha-export-menu', role: 'menu' },
+                    h('button', {
+                      type: 'button',
+                      className: 'dsha-mini',
+                      disabled: cellCount === 0,
+                      title: cellCount === 0 ? '这份表格上还没有单元格批注' : '列：文件 / 工作表 / 单元格 / 值 / 批注 / 状态 / 回复（UTF-8 带 BOM，Excel 可直接打开）',
+                      onClick: () => {
+                        const ok = downloadText(cellExportName(doc.fileName), cellAnnotationsToCsv(itemsOf(sessionId), doc), 'text/csv')
+                        setFlash(ok ? '已导出 ' + String(cellCount) + ' 条' : '导出失败')
+                        window.setTimeout(() => setFlash(''), 1600)
+                        setExportOpen(false)
+                      },
+                    }, '批注.csv（' + String(cellCount) + ' 条）'),
+                    h('button', {
+                      type: 'button',
+                      className: 'dsha-mini',
+                      disabled: true,
+                      title: '把已解决的批注写回单元格、另存一份 xlsx：下一版再做',
+                    }, '原名 · 改后.xlsx（下一版）'))
+                  : null)
+            })()
+            : h('button', {
             type: 'button',
             className: 'dsha-mini',
             title: '复制整篇（含文末批注）为 Markdown',
@@ -9741,6 +9946,8 @@ window.__ModuleLoader__.load({
         /* 0.115 · P1 */
         sanitizeRef, sanitizeLocator, colLetters, cellLabel, cellQuote, cellValue, lineAtOffset, renderOneLine,
         fileKindOfName, isFileDoc, fileDocOf, fileOpenNotice, docForStorage, fileDocBlocks, docFingerprint, fileTargetExtra,
+        /* 0.116 · P2 */
+        cellAnnotationsToCsv, cellExportName, isCellAnnotationOf,
         libOf: (sid) => libOf(sid),
         stateOf: () => state,
       },

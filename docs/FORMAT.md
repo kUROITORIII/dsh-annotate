@@ -1,6 +1,6 @@
 # 对话文档块格式（dsh-doc 契约）
 
-**对应插件版本：0.115.1** ｜ 语法一改就要改这一行，并通知使用侧同步（见文末）。
+**对应插件版本：0.116.0** ｜ 语法一改就要改这一行，并通知使用侧同步（见文末）。
 
 这份文档是 `dsh-doc` 格式的**唯一真相源**。插件的解析器按它实现，`doc-review` 技能按它使用；
 两边不一致时以本文件为准——改语法的人负责同时改这里和版本号。
@@ -177,7 +177,8 @@ GET /annotate-file?sid=<会话id>&path=<本会话目录内的文件名，或 <�
 → 200 { ok, kind, mtime, bytes, title, file, text?, model?, caps: { read, writeBack, export, truncated? } }
 → 404 { ok:false, reason:'missing' }
 → 409 { ok:false, reason:'cross-session' }   // 解析到别的会话目录或 annotate-docs 之外
-→ 415 { ok:false, reason:'unsupported', kind }   // xlsx / docx / pptx / image / 认不出的扩展名
+→ 415 { ok:false, reason:'unsupported', kind }   // docx / pptx / image / 认不出的扩展名
+→ 415 { ok:false, reason:'parse-failed', kind:'xlsx' }   // v0.116：xlsx 坏文件 / 老 .xls / zip64
 GET /annotate-file/list?sid=<会话id>   → 本会话目录里的非 .md 文件 { ok, items:[{ file, kind, supported, bytes, mtime }] }
 ```
 
@@ -187,9 +188,13 @@ GET /annotate-file/list?sid=<会话id>   → 本会话目录里的非 .md 文件
 | `txt` | `.txt` `.log` | 等宽纯文本，划句批注，发出去写 `文件名:行号` | 只读 |
 | `code` | `.js` `.ts` `.py` `.json` `.css` … | 同上 | 只读 |
 | `csv` | `.csv` | 表格（表头吸附），点单元格批注，发出去写 `文件名 · B3` | 只读 |
-| 其它 | `.xlsx` `.docx` `.pptx` 图片 | 提示「暂不支持预览」 | — |
+| `xlsx`（v0.116） | `.xlsx` `.xlsm` | 工作簿：多表时顶部切换，公式格标 ƒ（显示缓存值），点单元格批注，发出去写 `文件名 · Sheet1!B3` | 只读；可导出「批注.csv」 |
+| 其它 | `.docx` `.pptx` 图片 | 提示「暂不支持预览」 | — |
 
 - csv：`"` 包裹、`""` 转义、字段内换行、CRLF 都按 RFC 4180 解析；上限 5000 行 × 64 列，超出截断并 `caps.truncated = true`。
-- 单元格名：列名（A、B…Z、AA）+ 行号（表头是第 1 行）。单元格批注的引文是 `B3: 12.5%`。
+- 单元格名：列名（A、B…Z、AA）+ 行号（表头是第 1 行）。单元格批注的引文只放值（0.115.1 起），单元格名写在发送行里。
+- xlsx（v0.116）：`model = { type:'workbook', sheets:[{ name, rows, truncated?, formulas?, merges? }] }`，`caps.export = true`。
+  共享字符串 / 富文本 / 内联字符串都取纯文本；日期按单元格的数字格式（内置日期格式或含 y/d 的自定义格式）转成 `YYYY-MM-DD`（有时间加 ` HH:MM`），没有日期格式的数字原样；
+  公式只给缓存值，原文在 `formulas: { "C2": "=A2*B2" }`；合并区域只在左上角留值，`merges: ["A1:C1"]`；上限同 csv。locator 的 `sheet` 写表名。
 - 批注条目从 0.115 起多两个字段（与 `docKey` 并存一个版本，旧条目没有就仍按 `docKey` 解析）：
   `ref: { sid, fileKey }`，`locator`：md `{ kind:'md', blockIndex, startChar, endChar }` / 表格 `{ kind:'cell', sheet, row, col }` / 纯文本 `{ kind:'text', blockIndex:0, startChar, endChar, line }`。
