@@ -1159,6 +1159,10 @@ window.__ModuleLoader__.load({
         return {
           sid: sessionId,
           key: 'file:' + sessionTail(sessionId) + '/' + String(one.file === undefined ? '' : one.file),
+          /* 必须带上文件名：`shouldWriteDoc` 靠它判断「这份已经有文件了，别再写」。
+             以前这里漏了，于是从磁盘读回来的文档每次启动都当新文档再写一遍，
+             在别的会话目录里反复长副本（2026-11-27 实测：重启后 9 秒又写回）。 */
+          fileName: String(one.file === undefined ? '' : one.file),
           title: typeof one.title === 'string' ? one.title : '',
           source: one.text,
           blocks,
@@ -4178,7 +4182,7 @@ window.__ModuleLoader__.load({
 
     const DOC_PATH = '对话文档'
     /* 文档栏上会显示它：一眼看出跑的是不是刚改的那份客户端。 */
-    const PLUGIN_VERSION = '0.110.2'
+    const PLUGIN_VERSION = '0.110.3'
 
     /** 在聊天流里找最新一份 ```dsh-doc 围栏（助手输出的文档）。 */
     function scanDocBlocks() {
