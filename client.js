@@ -4984,7 +4984,7 @@ window.__ModuleLoader__.load({
 
     const DOC_PATH = '对话文档'
     /* 文档栏上会显示它：一眼看出跑的是不是刚改的那份客户端。 */
-    const PLUGIN_VERSION = '0.113.7'
+    const PLUGIN_VERSION = '0.113.8'
 
     /** 在聊天流里找最新一份 ```dsh-doc 围栏（助手输出的文档）。 */
     /** 测量包一层（7.2）：真实实现在 scanDocBlocksRaw。 */
@@ -8443,10 +8443,7 @@ window.__ModuleLoader__.load({
               className: navOpen ? 'dsha-mini dsha-mini-on' : 'dsha-mini',
               title: '这个对话里的所有文档',
               onClick: () => setNavOpen(value => !value),
-            /* 0.113.5 临时诊断：把「这份面板认为的当前文档键」直接显示出来，
-               用来确认屏幕和 state.doc 是不是同一份。定位后删掉。 */
-            }, String(docs.length) + ' 份 · ' + String(sessionId === null || sessionId === undefined ? '无会话' : sessionTail(sessionId))
-              + ' · doc=' + (doc === null || doc === undefined ? '空' : String(doc.key === undefined ? '' : doc.key).slice(-16)) + ' ▾'),
+            }, String(docs.length) + ' 份 ▾'),
             /* 左侧那个「✎ 批注」按钮在聊天标题栏，常被别的层盖住点不动；
                这里再给一个入口，位置在文档栏，肯定点得到。 */
             h('button', {
@@ -8798,12 +8795,6 @@ window.__ModuleLoader__.load({
           },
         },
           h('div', { className: 'dsha-doc-inner' },
-            /* 0.113.7 临时诊断：直接在正文顶部标出这份面板实际画的是什么。定位后删除。 */
-            h('div', { className: 'dsha-hint', style: { marginBottom: '6px', opacity: 0.7 } },
-              '诊断 key=' + (doc === null || doc === undefined ? '空' : String(doc.key === undefined ? '' : doc.key).slice(-20))
-              + ' blocks=' + String(blocks.length)
-              + ' viewing=' + (viewing === null ? '无' : String(viewing.key === undefined ? '' : viewing.key).slice(-20))
-              + ' pick=' + (pick === '' ? '空' : String(pick).slice(-20))),
             (viewing === null ? blocks : viewBlocks).length === 0
               ? h('div', { className: 'dsha-empty' },
                 viewing === null ? '还没有文档。' : '这份文档是空的。',

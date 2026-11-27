@@ -764,9 +764,15 @@ function registerDocTools(ctx, config) {
         if (sessionId === '') return { summary: '拿不到当前会话，没法定位文档。' }
         const piece = String(args?.text === undefined ? '' : args.text)
         if (piece.trim() === '') return { summary: '没改：追加内容为空。' }
-        const doc = await currentDoc(config, sessionId, args?.title)
-        const next = doc === null ? piece : doc.text.replace(/\s*$/u, '') + '\n\n' + piece
-        const title = args?.title !== undefined && String(args.title).trim() !== '' ? String(args.title) : (doc === null ? '' : doc.title)
+        /* 0.113.8：**指定了标题但这标题还不存在 → 当成新建**，只写这一份。
+           以前 currentDoc 在找不到标题时会退回「最新一份」，于是把旧文档整篇抄进新标题的文件，
+           同一个文件里越滚越长（2026-11-27 实测：一份 28KB 的 .md 里叠了 5 篇文档）。 */
+        const asked = args?.title === undefined || args.title === null ? '' : String(args.title).trim()
+        const doc = await currentDoc(config, sessionId, asked === '' ? undefined : asked)
+        const resolvedTitle = doc === null ? '' : String(doc.title)
+        const isNew = doc === null || (asked !== '' && resolvedTitle !== safeSegment(asked, 40))
+        const next = isNew === true ? piece : (doc.text.replace(/\s*$/u, '') + '\n\n' + piece)
+        const title = asked !== '' && isNew === true ? asked : (doc === null ? '' : doc.title)
         const saved = await writeDoc(config, sessionId, title, next)
         return { summary: `已写入「${saved.title}」（现在 ${next.length} 字符），落盘于 ${saved.file}。`, text: next }
       },
