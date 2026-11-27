@@ -5433,7 +5433,7 @@ window.__ModuleLoader__.load({
 
     const DOC_PATH = '对话文档'
     /* 文档栏上会显示它：一眼看出跑的是不是刚改的那份客户端。 */
-    const PLUGIN_VERSION = '0.121.2'
+    const PLUGIN_VERSION = '0.122.0'
 
     /** 在聊天流里找最新一份 ```dsh-doc 围栏（助手输出的文档）。 */
     /** 测量包一层（7.2）：真实实现在 scanDocBlocksRaw。 */
@@ -8431,9 +8431,14 @@ window.__ModuleLoader__.load({
           /* 只补「真的空着」：以前用 sid 判 stale，sid 一对不上就每拍从库里挑「最新一份」，
              而库里的 at 会被刷新 → 几份轮流当最新 → 面板每 300ms 跳一次
              （2026-11-27 日志实锤：677 次切换来源都是 library）。 */
+          /* 0.122：这个面板已经有「自己的」当前文档了，就不再采纳。
+             两个会话的面板各看各的，谁也不去改全局 state.doc —— 这是不让日志刷屏、
+             也不让批注跟着乱挂的关键。 */
+          const own = runtime.docBySid[sessionId]
+          if (own !== undefined && own !== null && docBelongsTo(own, sessionId)) return
           const currentDoc = state.doc
           if (currentDoc !== null && currentDoc !== undefined) {
-            /* 0.121.2：别的会话正占着全局文档，不要去抢（否则两个面板互相覆盖）。 */
+            /* 别的会话正占着全局文档，不要去抢（否则两个面板互相覆盖）。 */
             if (typeof currentDoc.sid === 'string' && currentDoc.sid !== '' && currentDoc.sid !== sessionId) return
             if (currentDoc.sid === sessionId) return              /* 本会话已有文档：库不插手 */
             const currentKey = String(currentDoc.key === undefined ? '' : currentDoc.key)
