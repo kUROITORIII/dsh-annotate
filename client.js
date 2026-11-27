@@ -393,6 +393,23 @@ window.__ModuleLoader__.load({
 .dsha-tv td[data-status="sent"]{background:rgba(77,107,254,.30)}
 .dsha-tv td[data-status="answered"]{background:rgba(60,190,120,.28)}
 .dsha-tv-foot{padding:6px 2px;font-size:11px;color:var(--dsw-alias-label-secondary)}
+.dsha-chip{display:inline-block;padding:1px 8px;border-radius:999px;font-size:11.5px;line-height:1.5;
+  border:1px solid transparent;white-space:nowrap}
+.dsha-chip[data-tone="green"]{background:rgba(63,185,80,.18);color:#4ec26b;border-color:rgba(63,185,80,.35)}
+.dsha-chip[data-tone="blue"]{background:rgba(88,132,255,.18);color:#8aa0ff;border-color:rgba(88,132,255,.35)}
+.dsha-chip[data-tone="gray"]{background:rgba(150,150,160,.16);color:#b8b8c0;border-color:rgba(150,150,160,.3)}
+.dsha-chip[data-tone="red"]{background:rgba(255,92,92,.16);color:#ff8a8a;border-color:rgba(255,92,92,.32)}
+.dsha-chip[data-tone="orange"]{background:rgba(255,166,64,.16);color:#ffb454;border-color:rgba(255,166,64,.32)}
+.dsha-chip[data-tone="purple"]{background:rgba(168,120,255,.18);color:#bd9bff;border-color:rgba(168,120,255,.34)}
+.dsha-chip-caret{display:inline-block;margin-left:4px;font-size:9px;opacity:0;transition:opacity .12s}
+.dsha-tv td[data-pickable="1"] .dsha-chip-caret{opacity:.45}
+.dsha-tv td[data-pickable="1"]:hover .dsha-chip-caret,.dsha-tv td[data-on="1"] .dsha-chip-caret{opacity:1}
+.dsha-tv td[data-pickable="1"]{cursor:pointer}
+.dsha-pick-item{display:flex;align-items:center;gap:8px;background:transparent;border:none;border-radius:6px;
+  padding:3px 6px;cursor:pointer;font:inherit;color:var(--dsw-alias-label-primary);text-align:left}
+.dsha-pick-item:hover{background:rgba(127,127,127,.14)}
+.dsha-pick-item-on{background:rgba(127,127,127,.1)}
+.dsha-pick-tick{margin-left:auto;color:#8aa0ff;font-size:11px}
 .dsha-cell-pick{position:fixed;z-index:98;display:flex;flex-direction:column;gap:2px;padding:4px;
   border-radius:8px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1);
   box-shadow:0 10px 26px rgba(0,0,0,.4);max-height:240px;overflow:auto}
@@ -5384,7 +5401,7 @@ window.__ModuleLoader__.load({
 
     const DOC_PATH = '对话文档'
     /* 文档栏上会显示它：一眼看出跑的是不是刚改的那份客户端。 */
-    const PLUGIN_VERSION = '0.118.1'
+    const PLUGIN_VERSION = '0.119.0'
 
     /** 在聊天流里找最新一份 ```dsh-doc 围栏（助手输出的文档）。 */
     /** 测量包一层（7.2）：真实实现在 scanDocBlocksRaw。 */
@@ -7363,6 +7380,21 @@ window.__ModuleLoader__.load({
       const [saving, setSaving] = React.useState('')
       const fileNameOfDoc = () => (doc !== null && doc !== undefined && typeof doc.fileName === 'string' ? doc.fileName : '')
       /* 列名像「状态」时给下拉，省得手打；否则自由输入。 */
+      /** 状态值 → 色调（关键词优先；没见过的值按顺序取色，保证同值同色）。 */
+      const toneOfStatus = (value) => {
+        const text = String(value === undefined || value === null ? '' : value).trim()
+        if (text === '') return ''
+        if (/已完成|已入库|已下载|已替换|通过|完成|done|ok/iu.test(text)) return 'green'
+        if (/进行中|在做|处理中|候选已找到|审核中|doing/iu.test(text)) return 'blue'
+        if (/未开始|待办|待找|待核|待定|todo|pending/iu.test(text)) return 'gray'
+        if (/需付费|付费|fail|失败|已取消|取消|error/iu.test(text)) return 'red'
+        if (/自建|自做/iu.test(text)) return 'purple'
+        if (/待核价格|待报价/iu.test(text)) return 'orange'
+        const palette = ['blue', 'purple', 'green', 'orange', 'gray', 'red']
+        let hash = 0
+        for (const ch of text) hash = (hash + ch.codePointAt(0)) % 9973
+        return palette[hash % palette.length]
+      }
       const statusOptionsOf = (c) => {
         const head = Array.isArray(rows[0]) && rows[0][c] !== undefined ? String(rows[0][c]) : ''
         if (/状态|完成|进度|status/iu.test(head) !== true) return null
@@ -7485,9 +7517,14 @@ window.__ModuleLoader__.load({
               onBlur: () => setEditor(null),
             }, options.map(one => h('option', { key: one, value: one }, one))))
         }
+        const tone = statusOptionsOf(c) === null ? '' : toneOfStatus(value)
+        const cellBody = tone === ''
+          ? value
+          : h('span', { className: 'dsha-chip', 'data-tone': tone }, value === '' ? '—' : value)
         return h(tag, {
           key: String(c),
           'data-cell': key,
+          'data-pickable': statusOptionsOf(c) === null ? undefined : '1',
           'data-on': selected === key ? '1' : undefined,
           'data-status': here === undefined ? undefined : marksStatus(here),
           title: cellLabel(r, c) + (formula === '' ? '' : ' · ' + formula + '（显示的是缓存值）') + ' · 左键选中，右键写批注',
@@ -7509,7 +7546,8 @@ window.__ModuleLoader__.load({
           },
         },
           formula === '' ? null : h('span', { className: 'dsha-tv-fx', title: formula }, 'ƒ'),
-          value,
+          cellBody,
+          statusOptionsOf(c) === null ? null : h('span', { className: 'dsha-chip-caret', 'aria-hidden': 'true' }, '▾'),
           newest === null
             ? null
             : h('span', {
@@ -7540,9 +7578,10 @@ window.__ModuleLoader__.load({
       }, picker.options.map(one => h('button', {
         key: one,
         type: 'button',
-        className: one === picker.value ? 'dsha-mini dsha-mini-on' : 'dsha-mini',
+        className: 'dsha-pick-item' + (one === picker.value ? ' dsha-pick-item-on' : ''),
         onClick: () => { commitCell(picker.r, picker.c, one); setPicker(null) },
-      }, one)))
+        }, h('span', { className: 'dsha-chip', 'data-tone': toneOfStatus(one) }, one),
+        one === picker.value ? h('span', { className: 'dsha-pick-tick' }, '✓') : null)))
       return h('div', { className: 'dsha-tv-wrap' },
         h('table', { className: 'dsha-tv' },
           h('thead', null,
