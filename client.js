@@ -286,7 +286,7 @@ window.__ModuleLoader__.load({
 .dsha-blk-tools button:hover{color:var(--dsw-alias-label-primary);border-color:var(--dsw-alias-border-l2)}
 .dsha-mini-on{color:#8aa0ff;background:rgba(77,107,254,.16)}
 /* 文档切换下拉 */
-.dsha-nav{position:relative;display:inline-flex}
+.dsha-nav{position:relative;display:inline-flex;align-items:center;gap:5px}
 .dsha-nav-menu{position:absolute;top:calc(100% + 6px);left:0;min-width:230px;max-width:330px;z-index:6;
   border:1px solid var(--dsw-alias-border-l2);border-radius:10px;overflow:hidden;
   background:var(--dsw-alias-bg-layer-2);box-shadow:0 18px 40px rgba(0,0,0,.45)}
@@ -297,7 +297,8 @@ window.__ModuleLoader__.load({
 .dsha-nav-item span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dsha-nav-name{display:flex;flex-direction:column;gap:1px;min-width:0;flex:1}
 .dsha-nav-name>span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.dsha-doc-file{font-size:10.5px;line-height:1.2;color:var(--dsw-alias-label-secondary);opacity:.8;max-width:200px;
+.dsha-doc-file{display:inline-flex;align-items:center;height:22px;font-size:11.5px;line-height:1;
+  color:var(--dsw-alias-label-secondary);opacity:.85;max-width:220px;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,Consolas,monospace;margin-left:2px}
 .dsha-nav-file{font-size:10.5px;line-height:1.2;color:var(--dsw-alias-label-secondary);opacity:.75;
   font-family:ui-monospace,Consolas,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -4998,7 +4999,7 @@ window.__ModuleLoader__.load({
 
     const DOC_PATH = '对话文档'
     /* 文档栏上会显示它：一眼看出跑的是不是刚改的那份客户端。 */
-    const PLUGIN_VERSION = '0.114.0'
+    const PLUGIN_VERSION = '0.114.1'
 
     /** 在聊天流里找最新一份 ```dsh-doc 围栏（助手输出的文档）。 */
     /** 测量包一层（7.2）：真实实现在 scanDocBlocksRaw。 */
