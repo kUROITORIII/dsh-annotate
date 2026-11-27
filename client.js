@@ -4539,7 +4539,7 @@ window.__ModuleLoader__.load({
 
     const DOC_PATH = '对话文档'
     /* 文档栏上会显示它：一眼看出跑的是不是刚改的那份客户端。 */
-    const PLUGIN_VERSION = '0.112.3'
+    const PLUGIN_VERSION = '0.112.4'
 
     /** 在聊天流里找最新一份 ```dsh-doc 围栏（助手输出的文档）。 */
     function scanDocBlocks() {
@@ -6346,7 +6346,24 @@ window.__ModuleLoader__.load({
       /* better-sidebar 的页签 props 是 { ctx, store, scope, tab, … }，**会话 id 在 scope.sessionId 上**。
          直接传下去：文档页签是常驻的，只靠 store.active 会拿到「上次操作批注的会话」，
          于是切到别的会话还能看见不属于它的文档。 */
-      const scope = props === null || props === undefined ? undefined : props.scope
+      /* 0.112.4：宿主的「右侧栏页签」槽位是 scope:'session'，会话 id 会**直接挂在 props 上**
+         （probe：props 里有 useSessions/useSessionStatus 这些按会话注入的 hooks）。
+         以前只看 props.scope，那是空的 → 面板退回 store.active（上次右键的会话）→ 切会话不跟随。 */
+      const sidCandidates = [
+        props === null || props === undefined ? '' : props.sessionId,
+        props === null || props === undefined || props.scope === null || props.scope === undefined ? '' : props.scope.sessionId,
+      ]
+      let liveSid = ''
+      for (const one of sidCandidates) {
+        if (typeof one === 'string' && one !== '') { liveSid = one; break }
+      }
+      if (runtime.docTabProbe !== true) {
+        runtime.docTabProbe = true
+        let all = []
+        try { all = Object.keys(props === null || props === undefined ? {} : props) } catch (error) { all = ['取不到'] }
+        logLine('文档页签 props全键=' + all.join('|') + ' 取到sid=' + (liveSid === '' ? '无' : sessionTail(liveSid)))
+      }
+      const scope = { sessionId: liveSid }
       return h(DocBoundary, null, h(DocPanel, { embedded: true, scope }))
     }
 
@@ -6438,14 +6455,14 @@ window.__ModuleLoader__.load({
         const mine = store.docs !== null && store.docs !== undefined && typeof (liveSid !== '' ? liveSid : scopeId) === 'string'
           ? (store.docs[liveSid !== '' ? liveSid : scopeId] || {}) : {}
         logLine('文档面板挂载 kind=' + (embedded === true ? '页签' : (wide === true ? '窗口' : '其它'))
-          + ' 来源=' + (liveSid !== '' ? 'docSid' : (scopeId !== '' ? '页签scope' : 'active'))
+          + ' 来源=' + (scopeId !== '' ? '页签scope' : (liveSid !== '' ? 'docSid' : 'active'))
           + ' sid=' + tail + ' 我的库=' + String(Object.keys(mine).length) + ' 份'
           + ' 全库=' + String(store.docs === null || store.docs === undefined ? 0 : Object.keys(store.docs).length) + '个会话')
       }, [embedded, wide])
-      const sessionId = liveSid !== ''
-        ? liveSid
-        : (scopeId !== ''
-          ? scopeId
+      const sessionId = scopeId !== ''
+        ? scopeId
+        : (liveSid !== ''
+          ? liveSid
           : (props !== null && props !== undefined && typeof props.sessionId === 'string' && props.sessionId !== ''
             ? props.sessionId
             : store.active))

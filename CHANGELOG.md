@@ -3,6 +3,11 @@
 只记**用户能感知的变化**与**改动原因**。版本号同 `package.json` / `PLUGIN_VERSION` / `docs/FORMAT.md`。
 
 > **升级须知**：`0.106.0`–`0.108.0` 存在文档面板「两份文档来回跳」（`state.doc` 被多个来源/多个面板实例互抢）。已由 `0.107.6`（库兜底不再抢）、`0.108.0`（单实例）、`0.109.0`（只认本会话目录 + 会话守卫）三处修完。挂着旧版的请 `git pull` 后重启。
+## 0.112.4 — 2026-11-27
+
+- **修：右侧栏「文档」页签不跟随会话（真因找到了）**。宿主给右侧栏页签的槽位是 `scope: 'session'`，会话 id **直接挂在 props 上**（探针实测：props 里是 `useSessions`/`useSessionStatus` 这些按会话注入的 hooks，`props.scope` 是空的）。我们以前只看 `props.scope` → 面板退回 `store.active`（上次右键批注的会话）→ 切会话不跟随，于是显示的是另一个会话的文档。
+  现在 `DocTabHost` 优先取 `props.sessionId`，取不到再用 `props.scope.sessionId`；面板取会话的顺序改为 页签 scope → docSid → 显式 props → `store.active`。
+- 另记一行诊断 `文档页签 props全键=… 取到sid=…`，重启后一眼能确认宿主到底给了什么。
 ## 0.112.3 — 2026-11-27
 
 - 诊断版：启动后往 `/annotate-client-debug.log` 记两类行，用来定位「页签到底认为自己是哪个会话」：
