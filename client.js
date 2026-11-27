@@ -963,7 +963,9 @@ window.__ModuleLoader__.load({
           /* 旧数据只有一根锚点：迁移成一条队列记录。 */
           base.sentTails = [{ tail: base.sentTail, batch: '', at: 0 }]
         }
-        if (typeof parsed.docPick === 'string') base.docPick = parsed.docPick
+        /* 0.113.1：**不再恢复 docPick**。它是「正在看历史版」的锁定键，一旦被持久化，
+           重启后列表里最新那份排第一、正文却还是上次点开的那份（用户看到的就是「标题和文档对不上」）。
+           0.87 修过一轮，这里把加载这一半也关掉；运行期点列表仍然照常生效。 */
         if (typeof parsed.docFont === 'number' && parsed.docFont >= 11 && parsed.docFont <= 24) {
           base.docFont = parsed.docFont
           /* 本地手动调过字号：设置页里的「默认字号」只当默认值，不再覆盖它。 */
@@ -1774,6 +1776,8 @@ window.__ModuleLoader__.load({
       if (current !== null && current !== undefined && current.local === true) return
       const blocks = parseMarkdownDoc(newest.text)
       runtime.docWhy = 'disk-new'
+      /* 新文件来了就退出历史版，否则正文被 docPick 锁着不换。 */
+      if (state.docPick !== '' || state.docView !== null) commit({ docPick: '', docView: null })
       putDoc({
         id: 'main',
         sid: sessionId,
@@ -4890,7 +4894,7 @@ window.__ModuleLoader__.load({
 
     const DOC_PATH = '对话文档'
     /* 文档栏上会显示它：一眼看出跑的是不是刚改的那份客户端。 */
-    const PLUGIN_VERSION = '0.113.0'
+    const PLUGIN_VERSION = '0.113.1'
 
     /** 在聊天流里找最新一份 ```dsh-doc 围栏（助手输出的文档）。 */
     /** 测量包一层（7.2）：真实实现在 scanDocBlocksRaw。 */
