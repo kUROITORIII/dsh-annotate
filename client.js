@@ -1501,7 +1501,12 @@ window.__ModuleLoader__.load({
       if (typeof doc.sid !== 'string' || doc.sid === '') return false
       if (doc.local === true) return true
       const fileKnown = typeof doc.fileName === 'string' && doc.fileName !== ''
-      return fileKnown !== true
+      if (fileKnown === true) return false
+      /* 键是 file:<尾巴>/<名> 就说明这份是从某个会话目录的文件读出来的，一律不回写。
+         以前只看 fileName，而「从文档库采纳」的这条路径不带 fileName，
+         于是每次启动都把自己再写一遍，在目录里反复长副本（2026-11-27）。 */
+      if (typeof doc.key === 'string' && doc.key.indexOf('file:') === 0) return false
+      return true
     }
     function shouldReloadFile(file, current, docEditing) {
       if (file === null || file === undefined || file.ok !== true) return false
@@ -4182,7 +4187,7 @@ window.__ModuleLoader__.load({
 
     const DOC_PATH = '对话文档'
     /* 文档栏上会显示它：一眼看出跑的是不是刚改的那份客户端。 */
-    const PLUGIN_VERSION = '0.110.3'
+    const PLUGIN_VERSION = '0.110.4'
 
     /** 在聊天流里找最新一份 ```dsh-doc 围栏（助手输出的文档）。 */
     function scanDocBlocks() {
@@ -6519,10 +6524,14 @@ window.__ModuleLoader__.load({
           const [key, entry] = mine[0]
           runtime.docWhy = 'library'
           const blocks = parseMarkdownDoc(entry.text)
+          const libName = String(key).indexOf('file:') === 0 && String(key).indexOf('/', 5) > 0
+            ? String(key).slice(String(key).indexOf('/', 5) + 1)
+            : ''
           putDoc({
             id: 'main',
             sid: sessionId,
             key,
+            fileName: libName,
             blocks,
             baseCount: blocks.length,
             appends: [],
