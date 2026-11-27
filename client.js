@@ -405,6 +405,32 @@ window.__ModuleLoader__.load({
 .dsha-tv td[data-pickable="1"] .dsha-chip-caret{opacity:.45}
 .dsha-tv td[data-pickable="1"]:hover .dsha-chip-caret,.dsha-tv td[data-on="1"] .dsha-chip-caret{opacity:1}
 .dsha-tv td[data-pickable="1"]{cursor:pointer}
+.dsha-chip[data-tone="teal"]{background:rgba(45,190,190,.18);color:#4fd1c5;border-color:rgba(45,190,190,.35)}
+.dsha-chip[data-tone="magenta"]{background:rgba(220,90,190,.18);color:#f08ad2;border-color:rgba(220,90,190,.35)}
+.dsha-chip[data-tone="yellow"]{background:rgba(210,180,60,.18);color:#e3c65a;border-color:rgba(210,180,60,.35)}
+.dsha-pick-row{display:flex;align-items:center;gap:2px;border-radius:6px}
+.dsha-pick-row:hover{background:rgba(127,127,127,.12)}
+.dsha-pick-grow{flex:1;min-width:0}
+.dsha-pick-more-btn{border:none;background:transparent;color:var(--dsw-alias-label-secondary);cursor:pointer;
+  padding:2px 6px;border-radius:4px;font-size:13px;line-height:1}
+.dsha-pick-more-btn:hover{background:rgba(127,127,127,.18);color:var(--dsw-alias-label-primary)}
+.dsha-pick-head{padding:2px 6px 6px;font-size:11px;color:var(--dsw-alias-label-secondary)}
+.dsha-pick-grid{display:flex;flex-wrap:wrap;gap:6px;padding:2px 4px 6px;max-width:220px}
+.dsha-pick-swatch{width:22px;height:22px;border-radius:50%;cursor:pointer;font-size:9px;color:var(--dsw-alias-label-secondary);
+  border:1px solid var(--dsw-alias-border-l1);background:transparent}
+.dsha-pick-swatch[data-on="1"]{outline:2px solid #8aa0ff;outline-offset:1px}
+.dsha-pick-swatch[data-tone="red"]{background:#c4554d}.dsha-pick-swatch[data-tone="orange"]{background:#cb7b3a}
+.dsha-pick-swatch[data-tone="yellow"]{background:#c2a43b}.dsha-pick-swatch[data-tone="green"]{background:#3f9d5b}
+.dsha-pick-swatch[data-tone="teal"]{background:#2fa3a3}.dsha-pick-swatch[data-tone="blue"]{background:#4a72c4}
+.dsha-pick-swatch[data-tone="purple"]{background:#8a5cc4}.dsha-pick-swatch[data-tone="magenta"]{background:#b854a0}
+.dsha-pick-danger{color:#ff8a8a}
+.dsha-pick-dots{display:inline-flex;gap:3px;margin-left:auto}
+.dsha-dot{width:8px;height:8px;border-radius:50%;background:#7f7f8f}
+.dsha-dot[data-tone="red"]{background:#c4554d}.dsha-dot[data-tone="orange"]{background:#cb7b3a}
+.dsha-dot[data-tone="yellow"]{background:#c2a43b}.dsha-dot[data-tone="green"]{background:#3f9d5b}
+.dsha-dot[data-tone="teal"]{background:#2fa3a3}.dsha-dot[data-tone="blue"]{background:#4a72c4}
+.dsha-dot[data-tone="purple"]{background:#8a5cc4}.dsha-dot[data-tone="magenta"]{background:#b854a0}
+.dsha-pick-sep{height:1px;margin:4px 2px;background:var(--dsw-alias-border-l1);opacity:.7}
 .dsha-pick-item{display:flex;align-items:center;gap:8px;background:transparent;border:none;border-radius:6px;
   padding:3px 6px;cursor:pointer;font:inherit;color:var(--dsw-alias-label-primary);text-align:left}
 .dsha-pick-item:hover{background:rgba(127,127,127,.14)}
@@ -5401,7 +5427,7 @@ window.__ModuleLoader__.load({
 
     const DOC_PATH = '对话文档'
     /* 文档栏上会显示它：一眼看出跑的是不是刚改的那份客户端。 */
-    const PLUGIN_VERSION = '0.119.0'
+    const PLUGIN_VERSION = '0.120.0'
 
     /** 在聊天流里找最新一份 ```dsh-doc 围栏（助手输出的文档）。 */
     /** 测量包一层（7.2）：真实实现在 scanDocBlocksRaw。 */
@@ -7517,7 +7543,7 @@ window.__ModuleLoader__.load({
               onBlur: () => setEditor(null),
             }, options.map(one => h('option', { key: one, value: one }, one))))
         }
-        const tone = statusOptionsOf(c) === null ? '' : toneOfStatus(value)
+        const tone = statusOptionsOf(c) === null ? '' : toneForCell(c, value)
         const cellBody = tone === ''
           ? value
           : h('span', { className: 'dsha-chip', 'data-tone': tone }, value === '' ? '—' : value)
@@ -7531,7 +7557,7 @@ window.__ModuleLoader__.load({
           /* 左键：状态列弹候选值（点一下换掉）；其它列只选中。右键开批注框，双击改值。 */
           onClick: (event) => {
             setSelected(String(r) + ':' + String(c))
-            const quick = statusOptionsOf(c)
+            const quick = optionsOfColumn(c)
             if (quick === null || formula !== '') return
             const rect = event.currentTarget.getBoundingClientRect()
             setPicker({ r, c, value: value, options: quick, x: rect.left, y: rect.bottom + 4 })
@@ -7571,17 +7597,187 @@ window.__ModuleLoader__.load({
         ? props.truncated
         : (doc.caps !== null && doc.caps !== undefined && doc.caps.truncated === true)
       /* 候选值浮层：点一个就换值并写回；点别处/按 Esc 关掉。 */
+      /* 状态选项：预设（对齐 Notion Presets）+ 自己加的值 + 每个值的颜色 + 本地隐藏。 */
+      const STATUS_PRESETS = [
+        { name: '状态 Status', values: ['未开始', '进行中', '已完成', '已取消', '阻塞'] },
+        { name: '优先级 Priority', values: ['高', '中', '低'] },
+        { name: '是否 Yes / No', values: ['是', '否'] },
+        { name: '审批 Approval', values: ['待审批', '已通过', '已驳回'] },
+        { name: '健康度 Health', values: ['正常', '有风险', '阻塞'] },
+        { name: '尺寸 Size', values: ['S', 'M', 'L', 'XL'] },
+      ]
+      const STATUS_TONES = ['red', 'orange', 'yellow', 'green', 'teal', 'blue', 'purple', 'magenta']
+      const TONE_LABEL = { red: '红', orange: '橙', yellow: '黄', green: '绿', teal: '青', blue: '蓝', purple: '紫', magenta: '品红', gray: '灰' }
+      /** 这一列的状态选项存哪儿：文件 + 工作表 + 列号（只存本地，不写进文件）。 */
+      const optsKeyOf = (c) => 'dsha-status-opts/v1:'
+        + String(doc !== null && doc !== undefined && doc.fileName ? doc.fileName : '') + '#' + sheet + '#' + String(c)
+      const readOpts = (c) => {
+        const empty = { custom: [], colors: {}, hidden: [] }
+        try {
+          const raw = window.localStorage.getItem(optsKeyOf(c))
+          if (raw === null) return empty
+          const one = JSON.parse(raw)
+          if (one === null || typeof one !== 'object') return empty
+          return {
+            custom: Array.isArray(one.custom) ? one.custom.filter(v => typeof v === 'string' && v !== '') : [],
+            colors: one.colors !== null && typeof one.colors === 'object' ? one.colors : {},
+            hidden: Array.isArray(one.hidden) ? one.hidden.filter(v => typeof v === 'string') : [],
+          }
+        } catch (error) {
+          return empty
+        }
+      }
+      const writeOpts = (c, one) => {
+        try {
+          const next = { custom: one.custom.slice(0, 24), colors: one.colors, hidden: one.hidden.slice(0, 48) }
+          window.localStorage.setItem(optsKeyOf(c), JSON.stringify(next))
+        } catch (error) { /* 存不下不影响写回 */ }
+      }
+      /** 单元格用色：本地指定优先，其次按关键词。 */
+      const toneForCell = (c, value) => {
+        const one = readOpts(c)
+        const text = String(value === undefined || value === null ? '' : value).trim()
+        if (text !== '' && typeof one.colors[text] === 'string' && one.colors[text] !== '') return one.colors[text]
+        return toneOfStatus(text)
+      }
+      /** 这一列能选的值：文件里已有的 + 自己加的 − 本地隐藏的。 */
+      const optionsOfColumn = (c) => {
+        const base = statusOptionsOf(c)
+        if (base === null) return []
+        const one = readOpts(c)
+        const all = []
+        for (const value of [...base, ...one.custom]) {
+          if (value === '' || one.hidden.includes(value)) continue
+          if (all.includes(value) !== true) all.push(value)
+        }
+        return all.slice(0, 18)
+      }
       const pickerNode = picker === null ? null : h('div', {
         className: 'dsha-cell-pick',
         style: { left: String(Math.max(8, picker.x)) + 'px', top: String(picker.y) + 'px' },
         onClick: event => event.stopPropagation(),
-      }, picker.options.map(one => h('button', {
-        key: one,
-        type: 'button',
-        className: 'dsha-pick-item' + (one === picker.value ? ' dsha-pick-item-on' : ''),
-        onClick: () => { commitCell(picker.r, picker.c, one); setPicker(null) },
-        }, h('span', { className: 'dsha-chip', 'data-tone': toneOfStatus(one) }, one),
-        one === picker.value ? h('span', { className: 'dsha-pick-tick' }, '✓') : null)))
+      },
+      picker.mode === 'color'
+        ? [
+          h('div', { key: 'ct', className: 'dsha-pick-head' }, String(picker.option || '') + ' 的颜色'),
+          h('div', { key: 'grid', className: 'dsha-pick-grid' },
+            ['', ...STATUS_TONES].map(tone => h('button', {
+              key: tone === '' ? 'auto' : tone,
+              type: 'button',
+              className: 'dsha-pick-swatch',
+              title: tone === '' ? '自动（按含义）' : TONE_LABEL[tone],
+              'data-tone': tone,
+              'data-on': (readOpts(picker.c).colors[picker.option] || '') === tone ? '1' : '0',
+              onClick: () => {
+                const one = readOpts(picker.c)
+                const colors = { ...one.colors }
+                if (tone === '') delete colors[picker.option]
+                else colors[picker.option] = tone
+                writeOpts(picker.c, { ...one, colors })
+                setPicker({ ...picker, mode: 'list' })
+              },
+            }, tone === '' ? '自动' : ''))),
+          h('div', { key: 'csep', className: 'dsha-pick-sep' }),
+          h('button', {
+            key: 'del',
+            type: 'button',
+            className: 'dsha-pick-more dsha-pick-danger',
+            onClick: () => {
+              const one = readOpts(picker.c)
+              const hidden = one.hidden.includes(picker.option) ? one.hidden : [...one.hidden, picker.option]
+              writeOpts(picker.c, { ...one, hidden })
+              setPicker({ ...picker, mode: 'list' })
+            },
+          }, '🗑 从候选里删除'),
+          h('button', {
+            key: 'cback',
+            type: 'button',
+            className: 'dsha-pick-more',
+            onClick: () => setPicker({ ...picker, mode: 'list' }),
+          }, '‹ 返回'),
+        ]
+        : picker.mode === 'presets'
+          ? [
+            h('div', { key: 'pt', className: 'dsha-pick-head' }, '预设'),
+            ...STATUS_PRESETS.map(preset => h('button', {
+              key: preset.name,
+              type: 'button',
+              className: 'dsha-pick-item',
+              onClick: () => {
+                const one = readOpts(picker.c)
+                const custom = [...one.custom]
+                for (const value of preset.values) if (custom.includes(value) !== true) custom.push(value)
+                writeOpts(picker.c, { ...one, custom })
+                setPicker({ ...picker, mode: 'list', options: optionsOfColumn(picker.c) })
+              },
+            },
+            h('span', { className: 'dsha-pick-preset' }, preset.name),
+            h('span', { className: 'dsha-pick-dots' },
+              preset.values.slice(0, 4).map(value => h('span', { key: value, className: 'dsha-dot', 'data-tone': toneOfStatus(value) }))))),
+            h('button', {
+              key: 'back',
+              type: 'button',
+              className: 'dsha-pick-more',
+              onClick: () => setPicker({ ...picker, mode: 'list' }),
+            }, '‹ 返回'),
+          ]
+          : [
+            ...picker.options.map(one => h('div', {
+              key: one,
+              className: 'dsha-pick-row' + (one === picker.value ? ' dsha-pick-item-on' : ''),
+            },
+            h('button', {
+              type: 'button',
+              className: 'dsha-pick-item dsha-pick-grow',
+              onClick: () => {
+                const opts = readOpts(picker.c)
+                if (opts.custom.includes(one) !== true) writeOpts(picker.c, { ...opts, custom: [...opts.custom, one] })
+                commitCell(picker.r, picker.c, one)
+                setPicker(null)
+              },
+            },
+            h('span', { className: 'dsha-chip', 'data-tone': toneForCell(picker.c, one) }, one === '' ? '（空）' : one),
+            one === picker.value ? h('span', { className: 'dsha-pick-tick' }, '✓') : null),
+            h('button', {
+              type: 'button',
+              className: 'dsha-pick-more-btn',
+              title: '改颜色 / 删除',
+              onClick: () => setPicker({ ...picker, mode: 'color', option: one }),
+            }, '…'))),
+            picker.mode === 'add'
+              ? h('input', {
+                key: 'add',
+                className: 'dsha-tv-edit',
+                autoFocus: true,
+                placeholder: '新选项，回车添加',
+                onKeyDown: (event) => {
+                  if (event.key === 'Escape') { event.preventDefault(); setPicker({ ...picker, mode: 'list' }) }
+                  if (event.key !== 'Enter') return
+                  event.preventDefault()
+                  const one = String(event.currentTarget.value || '').trim()
+                  if (one === '') return
+                  const opts = readOpts(picker.c)
+                  if (opts.custom.includes(one) !== true) writeOpts(picker.c, { ...opts, custom: [...opts.custom, one] })
+                  commitCell(picker.r, picker.c, one)
+                  setPicker(null)
+                },
+              })
+              : null,
+            h('div', { key: 'sep', className: 'dsha-pick-sep' }),
+            h('button', {
+              key: 'add-btn',
+              type: 'button',
+              className: 'dsha-pick-more',
+              onClick: () => setPicker({ ...picker, mode: 'add' }),
+            }, '＋ 新选项'),
+            h('button', {
+              key: 'preset-btn',
+              type: 'button',
+              className: 'dsha-pick-more',
+              onClick: () => setPicker({ ...picker, mode: 'presets' }),
+            }, '预设 ›'),
+          ])
+
       return h('div', { className: 'dsha-tv-wrap' },
         h('table', { className: 'dsha-tv' },
           h('thead', null,
