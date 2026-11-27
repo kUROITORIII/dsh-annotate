@@ -5377,7 +5377,7 @@ window.__ModuleLoader__.load({
 
     const DOC_PATH = '对话文档'
     /* 文档栏上会显示它：一眼看出跑的是不是刚改的那份客户端。 */
-    const PLUGIN_VERSION = '0.116.0'
+    const PLUGIN_VERSION = '0.116.1'
 
     /** 在聊天流里找最新一份 ```dsh-doc 围栏（助手输出的文档）。 */
     /** 测量包一层（7.2）：真实实现在 scanDocBlocksRaw。 */
@@ -7400,8 +7400,13 @@ window.__ModuleLoader__.load({
           'data-cell': key,
           'data-on': selected === key ? '1' : undefined,
           'data-status': here === undefined ? undefined : marksStatus(here),
-          title: cellLabel(r, c) + (formula === '' ? '' : ' · ' + formula + '（显示的是缓存值）') + ' · 点一下写批注',
-          onClick: event => openCell(event, r, c),
+          title: cellLabel(r, c) + (formula === '' ? '' : ' · ' + formula + '（显示的是缓存值）') + ' · 左键选中，右键写批注',
+          /* 左键只选中（和 Markdown 里划句一致），右键才开批注框。 */
+          onClick: () => setSelected(String(r) + ':' + String(c)),
+          onContextMenu: event => {
+            event.preventDefault()
+            openCell(event, r, c)
+          },
         },
           formula === '' ? null : h('span', { className: 'dsha-tv-fx', title: formula }, 'ƒ'),
           value,
