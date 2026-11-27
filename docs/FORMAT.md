@@ -1,6 +1,6 @@
 # 对话文档块格式（dsh-doc 契约）
 
-**对应插件版本：0.116.1** ｜ 语法一改就要改这一行，并通知使用侧同步（见文末）。
+**对应插件版本：0.117.0** ｜ 语法一改就要改这一行，并通知使用侧同步（见文末）。
 
 这份文档是 `dsh-doc` 格式的**唯一真相源**。插件的解析器按它实现，`doc-review` 技能按它使用；
 两边不一致时以本文件为准——改语法的人负责同时改这里和版本号。
@@ -198,3 +198,12 @@ GET /annotate-file/list?sid=<会话id>   → 本会话目录里的非 .md 文件
   公式只给缓存值，原文在 `formulas: { "C2": "=A2*B2" }`；合并区域只在左上角留值，`merges: ["A1:C1"]`；上限同 csv。locator 的 `sheet` 写表名。
 - 批注条目从 0.115 起多两个字段（与 `docKey` 并存一个版本，旧条目没有就仍按 `docKey` 解析）：
   `ref: { sid, fileKey }`，`locator`：md `{ kind:'md', blockIndex, startChar, endChar }` / 表格 `{ kind:'cell', sheet, row, col }` / 纯文本 `{ kind:'text', blockIndex:0, startChar, endChar, line }`。
+
+## 表格单元格写回（0.117）
+
+- 在 csv / xlsx 的表格里**双击**一个单元格即可改值（有 `ƒ` 的公式格不可改）；列名含「状态 / 完成 / 进度 / status」时给下拉（现有值 + 未开始/进行中/已完成/已取消），其余自由输入。
+- 回车或失焦提交 → `POST /annotate-file/set { sid, path, sheet?, row, col, value, mtime }`。
+  - 200 写回成功（客户端随即重读文件）；409 `stale` = 文件在别处改过，先重开；415 `read-only` = 这个类型不支持写回；404 `no-cell` / `no-sheet`。
+- 写之前会留一份 `<文件名>.bak`（只留最早那份，不覆盖）。
+- xlsx 是**换 sheet xml 后重新打包 zip**：写之前先自检（重新解析、确认目标格是新值）才落盘。
+- 只读单元格的批注照旧走「导出 ▾ → 批注.csv」。

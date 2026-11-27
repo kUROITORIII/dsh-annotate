@@ -393,6 +393,8 @@ window.__ModuleLoader__.load({
 .dsha-tv td[data-status="sent"]{background:rgba(77,107,254,.30)}
 .dsha-tv td[data-status="answered"]{background:rgba(60,190,120,.28)}
 .dsha-tv-foot{padding:6px 2px;font-size:11px;color:var(--dsw-alias-label-secondary)}
+.dsha-tv-edit{width:100%;box-sizing:border-box;font:inherit;font-size:12px;padding:2px 4px;border-radius:4px;
+  border:1px solid var(--dsw-alias-brand-primary);background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary)}
 .dsha-tv-fx{display:inline-block;margin-right:4px;font-size:10px;font-style:italic;color:#8aa0ff;cursor:help}
 .dsha-wb{display:flex;flex-direction:column;min-height:0}
 .dsha-wb-tabs{display:flex;flex-wrap:wrap;gap:4px;margin:0 0 8px}
@@ -5377,7 +5379,7 @@ window.__ModuleLoader__.load({
 
     const DOC_PATH = '对话文档'
     /* 文档栏上会显示它：一眼看出跑的是不是刚改的那份客户端。 */
-    const PLUGIN_VERSION = '0.116.1'
+    const PLUGIN_VERSION = '0.117.0'
 
     /** 在聊天流里找最新一份 ```dsh-doc 围栏（助手输出的文档）。 */
     /** 测量包一层（7.2）：真实实现在 scanDocBlocksRaw。 */
@@ -7348,6 +7350,58 @@ window.__ModuleLoader__.load({
       const formulas = props.formulas !== null && props.formulas !== undefined && typeof props.formulas === 'object' ? props.formulas : {}
       const [limit, setLimit] = React.useState(TABLE_PAGE_ROWS)
       const [selected, setSelected] = React.useState('')
+      /* 0.117：双击单元格就地改值，提交后写回磁盘（csv 直接重写；xlsx 换 sheet xml 重新打包）。 */
+      const [editor, setEditor] = React.useState(null)
+      const [notice, setNotice] = React.useState('')
+      const [saving, setSaving] = React.useState('')
+      const fileNameOfDoc = () => (doc !== null && doc !== undefined && typeof doc.fileName === 'string' ? doc.fileName : '')
+      /* 列名像「状态」时给下拉，省得手打；否则自由输入。 */
+      const statusOptionsOf = (c) => {
+        const head = Array.isArray(rows[0]) && rows[0][c] !== undefined ? String(rows[0][c]) : ''
+        if (/状态|完成|进度|status/iu.test(head) !== true) return null
+        const seen = new Set()
+        for (const line of rows) {
+          const one = Array.isArray(line) && line[c] !== undefined && line[c] !== null ? String(line[c]).trim() : ''
+          if (one !== '') seen.add(one)
+        }
+        const options = [...seen]
+        for (const extra of ['未开始', '进行中', '已完成', '已取消']) {
+          if (options.includes(extra) !== true) options.push(extra)
+        }
+        return options.slice(0, 12)
+      }
+      const commitCell = (r, c, value) => {
+        const fileName = fileNameOfDoc()
+        if (fileName === '' || typeof sessionId !== 'string' || sessionId === '') return
+        setSaving(String(r) + ':' + String(c))
+        setNotice('')
+        void (async () => {
+          try {
+            const response = await fetch('/annotate-file/set', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({
+                sid: sessionId, path: fileName, sheet,
+                row: r, col: c, value,
+                mtime: doc !== null && doc !== undefined && typeof doc.mtime === 'number' ? doc.mtime : undefined,
+              }),
+            })
+            const data = await response.json()
+            if (data !== null && data.ok === true) {
+              setNotice('已写回 ' + cellLabel(r, c) + '：' + String(value))
+              setEditor(null)
+              if (typeof props.onChanged === 'function') props.onChanged()
+            } else {
+              const why = data === null ? '' : String(data.reason === undefined ? '' : data.reason)
+              setNotice(why === 'stale' ? '文件在别处被改过，先重新打开再改' : ('没写回：' + (why === '' ? '未知原因' : why)))
+            }
+          } catch (error) {
+            setNotice('没写回：连不上宿主')
+          } finally {
+            setSaving('')
+          }
+        })()
+      }
       const byCell = new Map()
       for (const entry of (Array.isArray(props.marks) ? props.marks : [])) {
         const loc = entry.locator
@@ -7395,14 +7449,47 @@ window.__ModuleLoader__.load({
         const here = byCell.get(key)
         const newest = here === undefined ? null : here.slice().sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))[0]
         const formula = typeof formulas[cellLabel(r, c)] === 'string' ? formulas[cellLabel(r, c)] : ''
+        const editing = editor !== null && editor.r === r && editor.c === c && formula === ''
+        if (editing) {
+          const options = statusOptionsOf(c)
+          const stop = event => { event.stopPropagation() }
+          return h(tag, {
+            key: String(c),
+            'data-cell': key,
+            'data-editing': '1',
+            onClick: stop,
+            onContextMenu: stop,
+          }, options === null
+            ? h('input', {
+              className: 'dsha-tv-edit',
+              autoFocus: true,
+              defaultValue: editor.value,
+              onKeyDown: (event) => {
+                if (event.key === 'Enter') { event.preventDefault(); commitCell(r, c, event.currentTarget.value) }
+                if (event.key === 'Escape') { event.preventDefault(); setEditor(null) }
+              },
+              onBlur: event => commitCell(r, c, event.currentTarget.value),
+            })
+            : h('select', {
+              className: 'dsha-tv-edit',
+              autoFocus: true,
+              defaultValue: editor.value,
+              onChange: event => commitCell(r, c, event.currentTarget.value),
+              onBlur: () => setEditor(null),
+            }, options.map(one => h('option', { key: one, value: one }, one))))
+        }
         return h(tag, {
           key: String(c),
           'data-cell': key,
           'data-on': selected === key ? '1' : undefined,
           'data-status': here === undefined ? undefined : marksStatus(here),
           title: cellLabel(r, c) + (formula === '' ? '' : ' · ' + formula + '（显示的是缓存值）') + ' · 左键选中，右键写批注',
-          /* 左键只选中（和 Markdown 里划句一致），右键才开批注框。 */
+          /* 左键只选中（和 Markdown 里划句一致），右键开批注框，双击改值。 */
           onClick: () => setSelected(String(r) + ':' + String(c)),
+          onDoubleClick: () => {
+            if (formula !== '') return
+            setEditor({ r, c, value: value })
+          },
           onContextMenu: event => {
             event.preventDefault()
             openCell(event, r, c)
@@ -7495,11 +7582,12 @@ window.__ModuleLoader__.load({
           formulas: current.formulas,
           truncated: current.truncated === true,
           rows: current.rows,
+          onChanged: props.onChanged,
         }))
     }
 
     /** 非 md 文件的派发：表格 → TableView；工作簿 → WorkbookView；有正文 → 纯文本；其余 → 一句提示（不报错、不白屏）。 */
-    function renderFileDoc(doc, sessionId, marks) {
+    function renderFileDoc(doc, sessionId, marks, onChanged) {
       if (doc.parseFailed === true) {
         return h('div', { className: 'dsha-file-tip' }, '「' + String(doc.fileName || doc.title || '') + '」这个表格解析不了（文件可能损坏，或是老的 .xls 格式）。')
       }
@@ -7512,10 +7600,10 @@ window.__ModuleLoader__.load({
         return h('div', { className: 'dsha-file-tip' }, '正在读取「' + String(doc.fileName || '') + '」…')
       }
       if (doc.model !== null && doc.model !== undefined && doc.model.type === 'table') {
-        return h(TableView, { doc, sessionId, marks })
+        return h(TableView, { doc, sessionId, marks, onChanged })
       }
       if (doc.model !== null && doc.model !== undefined && doc.model.type === 'workbook') {
-        return h(WorkbookView, { key: 'wb:' + String(doc.key), doc, sessionId, marks })
+        return h(WorkbookView, { key: 'wb:' + String(doc.key), doc, sessionId, marks, onChanged })
       }
       return h(PlainFileView, { text: doc.fileText, kind: doc.fileKind, marks })
     }
@@ -9540,7 +9628,11 @@ window.__ModuleLoader__.load({
             /* 0.115 派发：blocks 有内容 → Markdown（下面原有的循环，一行没动）；
                非 md 文件 → 表格 TableView / 纯文本 <pre> / 不支持预览的提示。 */
             (viewing === null && isFileDoc(doc))
-              ? renderFileDoc(doc, sessionId, marks)
+              ? renderFileDoc(doc, sessionId, marks, () => {
+        /* 写完一个格子就重读这份文件，让面板显示磁盘上的真值（不靠前端猜）。 */
+        const name = doc !== null && doc !== undefined && typeof doc.fileName === 'string' ? doc.fileName : ''
+        if (name !== '') void openSessionFile(sessionId, name)
+      })
               : (viewing === null ? blocks : viewBlocks).length === 0
               ? h('div', { className: 'dsha-empty' },
                 viewing === null ? '还没有文档。' : '这份文档是空的。',

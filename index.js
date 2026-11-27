@@ -936,6 +936,216 @@ async function readSessionFile(root, sessionId, rawPath) {
  *                                     → 404 missing / 409 cross-session / 415 unsupported 或 parse-failed（xlsx 坏文件，0.116） / 413 too-large
  * GET /annotate-file/list?sid=       → 本会话目录里的非 .md 文件 { ok, items:[{ file, kind, supported, bytes, mtime }] }
  */
+/* ------------------------------------------------------------------ 0.117 单元格写回 */
+
+/** CRC32（写 zip 用，标准多项式 0xEDB88320）。 */
+const CRC_TABLE = (() => {
+  const table = new Uint32Array(256)
+  for (let n = 0; n < 256; n += 1) {
+    let c = n
+    for (let k = 0; k < 8; k += 1) c = (c & 1) === 1 ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1)
+    table[n] = c >>> 0
+  }
+  return table
+})()
+
+function crc32(buf) {
+  let c = 0xFFFFFFFF
+  for (let i = 0; i < buf.length; i += 1) c = CRC_TABLE[(c ^ buf[i]) & 0xFF] ^ (c >>> 8)
+  return (c ^ 0xFFFFFFFF) >>> 0
+}
+
+/**
+ * 重新打包 zip：未改动的条目原样复制压缩数据，改动过的重新 deflate。
+ * 按中央目录读（不信本地头，避免 data descriptor 的坑）。
+ * @param {Buffer} buf 原 zip
+ * @param {Map<string, Buffer>} replace 要替换的条目内容
+ * @returns {Buffer}
+ */
+function zipPack(buf, replace) {
+  let eocd = -1
+  for (let i = buf.length - 22; i >= Math.max(0, buf.length - 65557); i -= 1) {
+    if (buf.readUInt32LE(i) === 0x06054b50) { eocd = i; break }
+  }
+  if (eocd < 0) throw new Error('不是 zip 文件')
+  const count = buf.readUInt16LE(eocd + 10)
+  let at = buf.readUInt32LE(eocd + 16)
+  const list = []
+  for (let n = 0; n < count; n += 1) {
+    if (buf.readUInt32LE(at) !== 0x02014b50) throw new Error('zip 目录损坏')
+    const method = buf.readUInt16LE(at + 10)
+    const crc = buf.readUInt32LE(at + 16)
+    const compSize = buf.readUInt32LE(at + 20)
+    const size = buf.readUInt32LE(at + 24)
+    const nameLen = buf.readUInt16LE(at + 28)
+    const extraLen = buf.readUInt16LE(at + 30)
+    const commentLen = buf.readUInt16LE(at + 32)
+    const local = buf.readUInt32LE(at + 42)
+    const name = buf.slice(at + 46, at + 46 + nameLen).toString('utf8')
+    at += 46 + nameLen + extraLen + commentLen
+    const start = local + 30 + buf.readUInt16LE(local + 26) + buf.readUInt16LE(local + 28)
+    list.push({ name, method, crc, compSize, size, raw: buf.slice(start, start + compSize) })
+  }
+  const parts = []
+  const central = []
+  let offset = 0
+  for (const one of list) {
+    const fresh = replace.has(one.name) ? replace.get(one.name) : null
+    const method = fresh === null ? one.method : 8
+    const data = fresh === null ? one.raw : zlib.deflateRawSync(fresh)
+    const crc = fresh === null ? one.crc : crc32(fresh)
+    const size = fresh === null ? one.size : fresh.length
+    const nameBuf = Buffer.from(one.name, 'utf8')
+    const localHeader = Buffer.alloc(30)
+    localHeader.writeUInt32LE(0x04034B50, 0)
+    localHeader.writeUInt16LE(20, 4)
+    localHeader.writeUInt16LE(0x0800, 6)
+    localHeader.writeUInt16LE(method, 8)
+    localHeader.writeUInt16LE(0, 10)
+    localHeader.writeUInt16LE(0x21, 12)
+    localHeader.writeUInt32LE(crc, 14)
+    localHeader.writeUInt32LE(data.length, 18)
+    localHeader.writeUInt32LE(size, 22)
+    localHeader.writeUInt16LE(nameBuf.length, 26)
+    localHeader.writeUInt16LE(0, 28)
+    parts.push(localHeader, nameBuf, data)
+    const centralHeader = Buffer.alloc(46)
+    centralHeader.writeUInt32LE(0x02014B50, 0)
+    centralHeader.writeUInt16LE(20, 4)
+    centralHeader.writeUInt16LE(20, 6)
+    centralHeader.writeUInt16LE(0x0800, 8)
+    centralHeader.writeUInt16LE(method, 10)
+    centralHeader.writeUInt16LE(0, 12)
+    centralHeader.writeUInt16LE(0x21, 14)
+    centralHeader.writeUInt32LE(crc, 16)
+    centralHeader.writeUInt32LE(data.length, 20)
+    centralHeader.writeUInt32LE(size, 24)
+    centralHeader.writeUInt16LE(nameBuf.length, 28)
+    centralHeader.writeUInt32LE(offset, 42)
+    central.push(centralHeader, nameBuf)
+    offset += 30 + nameBuf.length + data.length
+  }
+  const centralBuf = Buffer.concat(central)
+  const end = Buffer.alloc(22)
+  end.writeUInt32LE(0x06054B50, 0)
+  end.writeUInt16LE(list.length, 8)
+  end.writeUInt16LE(list.length, 10)
+  end.writeUInt32LE(centralBuf.length, 12)
+  end.writeUInt32LE(offset, 16)
+  return Buffer.concat([...parts, centralBuf, end])
+}
+
+/** 把 sheet 名映射到 zip 内的 xml 路径（workbook.xml + rels）。 */
+function xlsxSheetPath(zipText, sheetName) {
+  const workbook = zipText('xl/workbook.xml')
+  const rels = zipText('xl/_rels/workbook.xml.rels')
+  const relMap = new Map()
+  for (const tag of rels.match(/<Relationship\b[^>]*\/?>/gu) || []) {
+    const id = (tag.match(/Id="([^"]+)"/u) || [])[1]
+    const target = (tag.match(/Target="([^"]+)"/u) || [])[1]
+    if (id !== undefined && target !== undefined) relMap.set(id, target.replace(/^\/?xl\//u, ''))
+  }
+  for (const tag of workbook.match(/<sheet\b[^>]*\/?>/gu) || []) {
+    const name = xmlDecode((tag.match(/name="([^"]*)"/u) || [])[1] || '')
+    const rid = (tag.match(/r:id="([^"]+)"/u) || [])[1]
+    if (name === sheetName && rid !== undefined && relMap.has(rid)) {
+      const target = relMap.get(rid)
+      return target.indexOf('/') === 0 ? target.slice(1) : 'xl/' + target
+    }
+  }
+  return ''
+}
+
+/** 在 sheet xml 里把某个单元格换成内联字符串（保留 s= 样式）。 */
+function setCellInSheetXml(xml, ref, value) {
+  const text = String(value === undefined || value === null ? '' : value)
+  const escaped = text.replace(/&/gu, '&amp;').replace(/</gu, '&lt;').replace(/>/gu, '&gt;')
+  const pattern = new RegExp('<c r="' + ref + '"[^>]*?(/>|>[\\s\\S]*?</c>)', 'u')
+  const hit = pattern.exec(xml)
+  if (hit === null) return { ok: false, reason: 'no-cell' }
+  const styleMatch = hit[0].match(/\ss="(\d+)"/u)
+  const style = styleMatch === null ? '' : ' s="' + styleMatch[1] + '"'
+  const next = '<c r="' + ref + '"' + style + ' t="inlineStr"><is><t xml:space="preserve">' + escaped + '</t></is></c>'
+  return { ok: true, xml: xml.slice(0, hit.index) + next + xml.slice(hit.index + hit[0].length) }
+}
+
+/** csv 里改一个格子：其余内容按原样保留（引号、换行、行尾、BOM）。 */
+function setCellInCsv(text, row, col, value) {
+  const bom = text.charCodeAt(0) === 0xFEFF
+  const body = bom ? text.slice(1) : text
+  const eol = body.indexOf('\r\n') >= 0 ? '\r\n' : '\n'
+  const rows = parseCsv(body, 1000000, 1000).rows
+  while (rows.length <= row) rows.push([])
+  while (rows[row].length <= col) rows[row].push('')
+  rows[row][col] = String(value === undefined || value === null ? '' : value)
+  const quote = (cell) => {
+    const one = String(cell === undefined || cell === null ? '' : cell)
+    return /[",\r\n]/u.test(one) ? '"' + one.replace(/"/gu, '""') + '"' : one
+  }
+  const out = rows.map(line => line.map(quote).join(',')).join(eol) + eol
+  return (bom ? '\uFEFF' : '') + out
+}
+
+/**
+ * 改一个单元格并写回磁盘。csv 直接重写；xlsx 换 sheet xml 后重新打包。
+ * 写之前先留一份 `<文件名>.bak`（只留最早那份，不覆盖）。
+ * @returns {Promise<{status: number, body: object}>}
+ */
+async function writeSessionCell(root, sessionId, rawPath, sheet, row, col, value, expectMtime) {
+  const resolved = resolveSessionFile(root, sessionId, rawPath)
+  if (resolved.ok !== true) return { status: resolved.status, body: { ok: false, reason: resolved.reason } }
+  const kind = fileKindOf(resolved.name)
+  if (kind !== 'csv' && kind !== 'xlsx') return { status: 415, body: { ok: false, reason: 'read-only' } }
+  let stat = null
+  try {
+    stat = await fs.stat(resolved.full)
+  } catch (error) {
+    return { status: 404, body: { ok: false, reason: 'missing' } }
+  }
+  if (typeof expectMtime === 'number' && Number.isFinite(expectMtime) && Math.abs(stat.mtimeMs - expectMtime) > 1) {
+    return { status: 409, body: { ok: false, reason: 'stale' } }
+  }
+  const bak = resolved.full + '.bak'
+  try {
+    await fs.access(bak)
+  } catch (error) {
+    await fs.copyFile(resolved.full, bak)
+  }
+  const text = String(value === undefined || value === null ? '' : value)
+  let next = null
+  if (kind === 'csv') {
+    const current = await fs.readFile(resolved.full, 'utf8')
+    next = Buffer.from(setCellInCsv(current, row, col, text), 'utf8')
+  } else {
+    const buf = await fs.readFile(resolved.full)
+    const zip = readZip(buf)
+    const zipText = (name) => {
+      const getter = zip.get(name)
+      if (getter === undefined) throw new Error('缺少条目：' + name)
+      return getter().toString('utf8')
+    }
+    const wanted = sheet === undefined || sheet === null || sheet === '' ? '' : String(sheet)
+    const pathInZip = wanted === '' ? 'xl/worksheets/sheet1.xml' : xlsxSheetPath(zipText, wanted)
+    if (pathInZip === '') return { status: 404, body: { ok: false, reason: 'no-sheet' } }
+    const xml = zipText(pathInZip)
+    const ref = colName(col) + String(row + 1)
+    const edited = setCellInSheetXml(xml, ref, text)
+    if (edited.ok !== true) return { status: 404, body: { ok: false, reason: 'no-cell' } }
+    next = zipPack(buf, new Map([[pathInZip, Buffer.from(edited.xml, 'utf8')]]))
+    /* 写完先自检：能重新解析、且目标格子读出来是新的值，再落盘（防写坏）。 */
+    const check = parseXlsx(next, TABLE_MAX_ROWS, TABLE_MAX_COLS)
+    const target = check.sheets.find(one => (wanted === '' ? true : one.name === wanted))
+    const got = target === undefined || target.rows[row] === undefined ? undefined : target.rows[row][col]
+    if (String(got === undefined ? '' : got) !== text) {
+      return { status: 500, body: { ok: false, reason: 'write-check-failed' } }
+    }
+  }
+  await fs.writeFile(resolved.full, next)
+  const after = await fs.stat(resolved.full)
+  return { status: 200, body: { ok: true, row, col, value: text, mtime: after.mtimeMs } }
+}
+
+
 function registerFileRoute(ctx, config) {
   ctx.inject(['webServer'], (webCtx) => {
     webCtx.effect(() => webCtx.webServer.register({
@@ -945,6 +1155,15 @@ function registerFileRoute(ctx, config) {
         const parsed = new URL(String(req.url === undefined ? '/' : req.url), 'http://dsh.local')
         const root = docsRoot(config)
         try {
+          /* 0.117：写回一个单元格（表格里改状态）。只允许 csv / xlsx，且路径必须在本会话目录内。 */
+          if (req.method === 'POST' && parsed.pathname === '/annotate-file/set') {
+            const body = JSON.parse((await readBody(req)) || '{}')
+            const out = await writeSessionCell(
+              root, body.sid || '', body.path || '', body.sheet, Number(body.row), Number(body.col), body.value, body.mtime,
+            )
+            sendJson(res, out.status, out.body)
+            return
+          }
           if (req.method !== 'GET') {
             sendJson(res, 405, { ok: false, reason: 'method-not-allowed' })
             return
