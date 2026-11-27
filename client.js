@@ -5433,7 +5433,7 @@ window.__ModuleLoader__.load({
 
     const DOC_PATH = '对话文档'
     /* 文档栏上会显示它：一眼看出跑的是不是刚改的那份客户端。 */
-    const PLUGIN_VERSION = '0.122.0'
+    const PLUGIN_VERSION = '0.123.0'
 
     /** 在聊天流里找最新一份 ```dsh-doc 围栏（助手输出的文档）。 */
     /** 测量包一层（7.2）：真实实现在 scanDocBlocksRaw。 */
@@ -9636,6 +9636,32 @@ window.__ModuleLoader__.load({
                     setNavOpen(false)
                   },
                 }, '在编辑器里打开'),
+                /* 0.123：会话 id 变了以后，把别的会话目录里的文档一键捞回来。 */
+                h('div', {
+                  key: 'rescue',
+                  className: 'dsha-nav-item',
+                  title: '会话 id 变化（重启/续话）后，旧目录里的文档会看不到；点这里把其它会话目录的 .md 都复制进本会话（只增不删）',
+                  onClick: () => {
+                    void (async () => {
+                      try {
+                        const data = await fetch('/annotate-doc/rescue', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ sid: sessionId }),
+                        }).then(response => response.json())
+                        if (data !== null && data.ok === true) {
+                          window.alert('已从其它会话目录复制 ' + String(data.copied) + ' 份文档（同名跳过 ' + String(data.skipped) + ' 份）。')
+                          markScanDirty('rescue')
+                        } else {
+                          window.alert('没导入成功：' + String(data === null ? '未知原因' : data.reason || '未知原因'))
+                        }
+                      } catch (error) {
+                        window.alert('没导入成功：连不上宿主（宿主需要重启到 0.123 才有这个接口）')
+                      }
+                    })()
+                    setNavOpen(false)
+                  },
+                }, '从其它会话导入文档'),
                 /* ---- 分割线：设置项 与 整理（会删东西的三项合成一行小按钮） ---- */
                 h('div', { key: 'sep-tidy', className: 'dsha-nav-sep' }),
                 h('div', {

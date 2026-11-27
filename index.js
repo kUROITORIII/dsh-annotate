@@ -1425,6 +1425,101 @@ async function importSessionFile(root, sessionId, rawPath) {
 }
 
 
+/**
+ * 把别的会话目录里的文档「捞」回本会话（0.123）。
+ * 会话 id 变化（重启/续话）时，文档还躺在旧尾巴目录里，这个入口让人一键并进来。
+ * 跳过同名文件；只在目标目录不存在该名字时复制。
+ * @returns {Promise<{status: number, body: object}>}
+ */
+async function rescueDocs(root, sessionId) {
+  const tail = sessionTailOf(sessionId)
+  const dir = path.join(root, tail)
+  await fs.mkdir(dir, { recursive: true })
+  let folders = []
+  try {
+    folders = await fs.readdir(root)
+  } catch (error) {
+    return { status: 500, body: { ok: false, reason: 'read-root-failed' } }
+  }
+  const copied = []
+  const skipped = []
+  for (const folder of folders) {
+    if (folder === tail || folder.startsWith('_')) continue
+    const from = path.join(root, folder)
+    let stat = null
+    try {
+      stat = await fs.stat(from)
+    } catch (error) {
+      continue
+    }
+    if (stat.isDirectory() !== true) continue
+    let names = []
+    try {
+      names = await fs.readdir(from)
+    } catch (error) {
+      continue
+    }
+    for (const name of names) {
+      if (name.endsWith('.md') !== true) continue
+      const target = path.join(dir, name)
+      let exists = true
+      try {
+        await fs.access(target)
+      } catch (error) {
+        exists = false
+      }
+      if (exists) {
+        skipped.push(name)
+        continue
+      }
+      try {
+        await fs.copyFile(path.join(from, name), target)
+        copied.push(name)
+      } catch (error) { /* 单个失败不影响其它 */ }
+    }
+  }
+  return { status: 200, body: { ok: true, sid: sessionId, copied: copied.length, skipped: skipped.length } }
+}
+
+/**
+ * 每天第一次动这份文档时，把整个会话目录快照到 `_backup/<尾巴>-<YYYYMMDD>/`（0.123）。
+ * 保留最近 7 份，删更早的。只在确实有 md 时做，失败静默。
+ */
+async function snapshotDocs(root, sessionId) {
+  const tail = sessionTailOf(sessionId)
+  const dir = path.join(root, tail)
+  let names = []
+  try {
+    names = (await fs.readdir(dir)).filter(name => name.endsWith('.md'))
+  } catch (error) {
+    return
+  }
+  if (names.length === 0) return
+  const day = new Date().toISOString().slice(0, 10).replace(/-/gu, '')
+  const backupRoot = path.join(root, '_backup')
+  const target = path.join(backupRoot, tail + '-' + day)
+  try {
+    await fs.access(target)
+    return
+  } catch (error) { /* 今天还没备过 */ }
+  try {
+    await fs.mkdir(target, { recursive: true })
+    for (const name of names) {
+      try {
+        await fs.copyFile(path.join(dir, name), path.join(target, name))
+      } catch (error) { /* 单个失败不影响其它 */ }
+    }
+    /* 只留最近 7 份备份。 */
+    const all = (await fs.readdir(backupRoot)).filter(name => name.startsWith(tail + '-')).sort()
+    for (const old of all.slice(0, Math.max(0, all.length - 7))) {
+      try {
+        await fs.rm(path.join(backupRoot, old), { recursive: true, force: true })
+      } catch (error) { /* 删不掉留着 */ }
+    }
+  } catch (error) { /* 备份失败不影响主线 */ }
+}
+
+
 function registerDocRoute(ctx, config) {
   ctx.inject(['webServer'], (webCtx) => {
     webCtx.effect(() => webCtx.webServer.register({
@@ -1449,6 +1544,7 @@ function registerDocRoute(ctx, config) {
               return
             }
             await migrateLegacy(root, sid)
+            void snapshotDocs(root, sid)
             sendJson(res, 200, { ok: true, sid, items: await listSessionDocs(root, sid) })
             return
           }
@@ -1545,6 +1641,26 @@ function registerDocRoute(ctx, config) {
             await fs.mkdir(target, { recursive: true })
             await openInExplorer(target)
             sendJson(res, 200, { ok: true, target })
+            return
+          }
+
+          /* 0.123：会话 id 变了以后，把别的会话目录里的 md 捞回本会话（一键）。 */
+          if (req.method === 'POST' && parsed.pathname === '/annotate-doc/rescue') {
+            const raw = await readBody(req)
+            let payload = null
+            try {
+              payload = JSON.parse(raw.toString('utf8'))
+            } catch (error) {
+              sendJson(res, 400, { ok: false, reason: 'bad-json' })
+              return
+            }
+            const sid = payload === null || typeof payload !== 'object' ? '' : String(payload.sid === undefined ? '' : payload.sid)
+            if (sid === '') {
+              sendJson(res, 400, { ok: false, reason: 'no-sid' })
+              return
+            }
+            const out = await rescueDocs(root, sid)
+            sendJson(res, out.status, out.body)
             return
           }
 
