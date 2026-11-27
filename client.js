@@ -393,6 +393,11 @@ window.__ModuleLoader__.load({
 .dsha-tv td[data-status="sent"]{background:rgba(77,107,254,.30)}
 .dsha-tv td[data-status="answered"]{background:rgba(60,190,120,.28)}
 .dsha-tv-foot{padding:6px 2px;font-size:11px;color:var(--dsw-alias-label-secondary)}
+.dsha-cell-pick{position:fixed;z-index:98;display:flex;flex-direction:column;gap:2px;padding:4px;
+  border-radius:8px;border:1px solid var(--dsw-alias-border-l1);background:var(--dsw-alias-bg-layer-1);
+  box-shadow:0 10px 26px rgba(0,0,0,.4);max-height:240px;overflow:auto}
+.dsha-cell-pick .dsha-mini{text-align:left;padding:4px 10px;border-radius:6px}
+.dsha-cell-pick .dsha-mini:hover{background:var(--dsw-alias-bg-layer-2)}
 .dsha-tv-edit{width:100%;box-sizing:border-box;font:inherit;font-size:12px;padding:2px 4px;border-radius:4px;
   border:1px solid var(--dsw-alias-brand-primary);background:var(--dsw-alias-bg-base);color:var(--dsw-alias-label-primary)}
 .dsha-tv-fx{display:inline-block;margin-right:4px;font-size:10px;font-style:italic;color:#8aa0ff;cursor:help}
@@ -5379,7 +5384,7 @@ window.__ModuleLoader__.load({
 
     const DOC_PATH = '对话文档'
     /* 文档栏上会显示它：一眼看出跑的是不是刚改的那份客户端。 */
-    const PLUGIN_VERSION = '0.117.0'
+    const PLUGIN_VERSION = '0.117.1'
 
     /** 在聊天流里找最新一份 ```dsh-doc 围栏（助手输出的文档）。 */
     /** 测量包一层（7.2）：真实实现在 scanDocBlocksRaw。 */
@@ -7352,6 +7357,8 @@ window.__ModuleLoader__.load({
       const [selected, setSelected] = React.useState('')
       /* 0.117：双击单元格就地改值，提交后写回磁盘（csv 直接重写；xlsx 换 sheet xml 重新打包）。 */
       const [editor, setEditor] = React.useState(null)
+      /* 0.117.1：状态这类列单击就弹出候选值，点一个直接换掉并写回（不用打字）。 */
+      const [picker, setPicker] = React.useState(null)
       const [notice, setNotice] = React.useState('')
       const [saving, setSaving] = React.useState('')
       const fileNameOfDoc = () => (doc !== null && doc !== undefined && typeof doc.fileName === 'string' ? doc.fileName : '')
@@ -7484,8 +7491,14 @@ window.__ModuleLoader__.load({
           'data-on': selected === key ? '1' : undefined,
           'data-status': here === undefined ? undefined : marksStatus(here),
           title: cellLabel(r, c) + (formula === '' ? '' : ' · ' + formula + '（显示的是缓存值）') + ' · 左键选中，右键写批注',
-          /* 左键只选中（和 Markdown 里划句一致），右键开批注框，双击改值。 */
-          onClick: () => setSelected(String(r) + ':' + String(c)),
+          /* 左键：状态列弹候选值（点一下换掉）；其它列只选中。右键开批注框，双击改值。 */
+          onClick: (event) => {
+            setSelected(String(r) + ':' + String(c))
+            const quick = statusOptionsOf(c)
+            if (quick === null || formula !== '') return
+            const rect = event.currentTarget.getBoundingClientRect()
+            setPicker({ r, c, value: value, options: quick, x: rect.left, y: rect.bottom + 4 })
+          },
           onDoubleClick: () => {
             if (formula !== '') return
             setEditor({ r, c, value: value })
@@ -7519,6 +7532,17 @@ window.__ModuleLoader__.load({
       const truncated = typeof props.truncated === 'boolean'
         ? props.truncated
         : (doc.caps !== null && doc.caps !== undefined && doc.caps.truncated === true)
+      /* 候选值浮层：点一个就换值并写回；点别处/按 Esc 关掉。 */
+      const pickerNode = picker === null ? null : h('div', {
+        className: 'dsha-cell-pick',
+        style: { left: String(Math.max(8, picker.x)) + 'px', top: String(picker.y) + 'px' },
+        onClick: event => event.stopPropagation(),
+      }, picker.options.map(one => h('button', {
+        key: one,
+        type: 'button',
+        className: one === picker.value ? 'dsha-mini dsha-mini-on' : 'dsha-mini',
+        onClick: () => { commitCell(picker.r, picker.c, one); setPicker(null) },
+      }, one)))
       return h('div', { className: 'dsha-tv-wrap' },
         h('table', { className: 'dsha-tv' },
           h('thead', null,
@@ -7536,7 +7560,10 @@ window.__ModuleLoader__.load({
               style: { marginLeft: '8px' },
               onClick: () => setLimit(value => value + TABLE_PAGE_ROWS),
             }, '再显示 ' + String(Math.min(TABLE_PAGE_ROWS, rows.length - shown)) + ' 行')
-            : null))
+            : null),
+        pickerNode,
+        (saving === '' ? null : h('div', { className: 'dsha-tv-foot' }, '正在写回 ' + saving + '…')),
+        (notice === '' ? null : h('div', { className: 'dsha-tv-foot' }, notice)))
     }
 
     /**
