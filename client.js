@@ -853,7 +853,12 @@ window.__ModuleLoader__.load({
             base.ui = { x: ui.x, y: ui.y, w: ui.w, h: ui.h }
           }
         }
-        if (parsed.doc !== null && typeof parsed.doc === 'object' && Array.isArray(parsed.doc.blocks)) {
+        /* ⚠ 2026-11-27：启动时**不再**恢复「当前文档」。
+           以前这里把上次的 doc 原样塞回 state.doc，且不校验它属于哪个会话 ——
+           于是别的会话的文档会在重启后继续显示（0.110.1~0.110.5 都没堵住这条路）。
+           现在留空：面板每 300ms 按「磁盘 → 对话块 → 文档库」重新取本会话的文档。
+           旧字段仍保留在 localStorage 里不删，需要时可以临时把 false 改成 true 回看。 */
+        if (false && parsed.doc !== null && typeof parsed.doc === 'object' && Array.isArray(parsed.doc.blocks)) {
           const rebuilt = parsed.doc.blocks
             .filter(block => (
               block !== null && typeof block === 'object'
@@ -1203,6 +1208,13 @@ window.__ModuleLoader__.load({
         next[key] = entry
       }
       if (changed) commit({ docLibrary: next }, true)
+      try {
+        fetch('/annotate-log', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ at: new Date().toISOString(), text: '文档清理 [' + sessionTail(sessionId) + '] 磁盘 ' + String(present.size) + ' 份，库清理 ' + (changed ? '有' : '无') }),
+        }).catch(() => {})
+      } catch (error) { /* 忽略 */ }
       const cur = state.doc
       if (cur !== null && cur !== undefined && typeof cur.key === 'string' && cur.key.indexOf(tail) === 0) {
         const name = String(cur.key).slice(tail.length).replace(/\.md$/iu, '')
@@ -4222,7 +4234,7 @@ window.__ModuleLoader__.load({
 
     const DOC_PATH = '对话文档'
     /* 文档栏上会显示它：一眼看出跑的是不是刚改的那份客户端。 */
-    const PLUGIN_VERSION = '0.110.5'
+    const PLUGIN_VERSION = '0.110.6'
 
     /** 在聊天流里找最新一份 ```dsh-doc 围栏（助手输出的文档）。 */
     function scanDocBlocks() {
