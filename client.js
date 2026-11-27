@@ -1732,6 +1732,22 @@ window.__ModuleLoader__.load({
       return out
     }
 
+    /**
+     * 启动后第一次同步：直接把面板切到磁盘上最新的那份（除非用户正在本地编辑）。
+     * 为什么需要：库里通常已经「全都有」，于是 fresh 为空、不会切；而聊天块那条路又被
+     * 历史块挡掉了 —— 结果启动后停在几小时前的旧文档（2026-11-27）。 */
+    async function switchToNewestOnDisk(sessionId) {
+      const current = state.doc
+      if (current !== null && current !== undefined && current.local === true) return
+      const one = await readDocFile(sessionId)
+      if (one === null || one === undefined) return
+      if (current !== null && current !== undefined && current.key === one.key
+        && current.source === one.source) return
+      runtime.docWhy = 'disk-first'
+      if (state.docPick !== '' || state.docView !== null) commit({ docPick: '', docView: null })
+      putDoc(one)
+    }
+
     async function syncDocsFromDisk(sessionId) {
       if (typeof sessionId !== 'string' || sessionId === '') return
       const now = Date.now()
@@ -1750,6 +1766,9 @@ window.__ModuleLoader__.load({
       const bucket = libOf(sessionId)
       const firstSync = runtime.diskKnown[sessionId] !== true
       runtime.diskKnown[sessionId] = true
+      if (firstSync === true) {
+        try { await switchToNewestOnDisk(sessionId) } catch (error) { /* 下一轮再试 */ }
+      }
       const fresh = freshDiskDocs(bucket, listed.items, tail, now)
       if (fresh.length === 0) return
       const nextBucket = { ...bucket }
@@ -2145,12 +2164,16 @@ window.__ModuleLoader__.load({
      *   'adopt'  —— 新块：认领
      *   'skip'   —— 不该动（看历史版 / 手改过 / 已采纳过）
      */
-    function chatDocAction(scanText, lastText, stableTicks, chatKey, adopted, current, pick) {
+    function chatDocAction(scanText, lastText, stableTicks, chatKey, adopted, current, pick, historical) {
       if (typeof scanText !== 'string' || scanText === '') return 'skip'
       if (scanText !== lastText) return 'wait'                      /* 内容还在变 */
       if (stableTicks < 1) return 'wait'                            /* 至少要连两拍一样 */
       if (pick !== '' && pick !== undefined) return 'skip'
       if (current !== null && current !== undefined && current.local === true) return 'skip'
+      /* 启动那一刻聊天里已经存在的块是**历史**：它们不是「刚生成的那份」，
+         拿它们当当前文档就会把面板钉在几小时前的旧文档上（2026-11-27 用户报的"右边没变化"）。
+         只有页面加载之后新出现的块才允许被采纳。 */
+      if (historical === true) return 'skip'
       const sameKey = current !== null && current !== undefined
         && String(current.key === undefined ? '' : current.key) === String(chatKey === undefined ? '' : chatKey)
       if (sameKey) return current.source === scanText ? 'skip' : 'update'
@@ -2685,7 +2708,7 @@ window.__ModuleLoader__.load({
     /** 根作用域的侧栏拿不到 inputActions，由会话作用域的按钮把它挂过来。
      *  `target` 是文件选区的唯一接缝：谁采到「文件 + 行号 + 原文」谁就往这里写，
      *  AnnotateSurface 消费后立刻清空，绝不跨批次残留。 */
-    const runtime = { actions: null, target: null, targetAt: 0, trace: '', ctx: null, replyScan: { refs: [], total: 0 }, replySeen: {}, lostCache: new Map(), autoOpen: {}, settingsForm: null, dockDispose: null, dockOn: null, docPurged: {}, diskSyncAt: {}, diskKnown: {} }
+    const runtime = { actions: null, target: null, targetAt: 0, trace: '', ctx: null, replyScan: { refs: [], total: 0 }, replySeen: {}, lostCache: new Map(), autoOpen: {}, settingsForm: null, dockDispose: null, dockOn: null, docPurged: {}, diskSyncAt: {}, diskKnown: {}, chatBaseline: {} }
 
     function freshTarget() {
       if (runtime.target === null) return null
@@ -4894,7 +4917,7 @@ window.__ModuleLoader__.load({
 
     const DOC_PATH = '对话文档'
     /* 文档栏上会显示它：一眼看出跑的是不是刚改的那份客户端。 */
-    const PLUGIN_VERSION = '0.113.1'
+    const PLUGIN_VERSION = '0.113.2'
 
     /** 在聊天流里找最新一份 ```dsh-doc 围栏（助手输出的文档）。 */
     /** 测量包一层（7.2）：真实实现在 scanDocBlocksRaw。 */
@@ -7134,6 +7157,17 @@ window.__ModuleLoader__.load({
             setProbe(previous => (previous === scan.probe ? previous : scan.probe))
             setCandidate(previous => (previous === scan.candidate ? previous : String(scan.candidate === undefined ? '' : scan.candidate)))
           }
+          /* 0.113.2：第一次扫描时记下「本来就存在的聊天块」，它们算历史，不许被采纳成当前文档。 */
+          try {
+            if (runtime.chatBaseline[sessionId] === undefined) {
+              const keys = new Set()
+              for (const item of (Array.isArray(scan.list) ? scan.list : [])) {
+                if (item !== null && item !== undefined && typeof item.key === 'string') keys.add(item.key)
+              }
+              if (typeof scan.foundKey === 'string' && scan.foundKey !== '') keys.add(scan.foundKey)
+              runtime.chatBaseline[sessionId] = keys
+            }
+          } catch (error) { /* 忽略 */ }
           /* 扫描到的每一份都进文档库（增量合并，只有真变了才写盘）。 */
           const scanned = Array.isArray(scan.list) ? scan.list : []
           if (scanned.length > 0) {
@@ -7245,7 +7279,9 @@ window.__ModuleLoader__.load({
             return
           }
           chatSeenTicks += 1
-          const action = chatDocAction(scan.found, chatSeenText, chatSeenTicks, chatKey, adoptedSetOf(sessionId), current, state.docPick)
+          const baseline = runtime.chatBaseline[sessionId]
+          const historical = baseline !== undefined && typeof chatKey === 'string' && baseline.has(chatKey)
+          const action = chatDocAction(scan.found, chatSeenText, chatSeenTicks, chatKey, adoptedSetOf(sessionId), current, state.docPick, historical)
           if (action === 'wait' || action === 'skip') return
           const heading = /^#{1,6}\s*(.+)$/mu.exec(scan.found)
           const plain = scan.found.split('\n').filter(line => line.trim() !== '')[0] || '未命名文档'
