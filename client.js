@@ -295,6 +295,10 @@ window.__ModuleLoader__.load({
 .dsha-nav-item:hover{background:rgba(127,127,127,.12)}
 .dsha-nav-item[data-on="1"]{color:#8aa0ff}
 .dsha-nav-item span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dsha-nav-name{display:flex;flex-direction:column;gap:1px;min-width:0;flex:1}
+.dsha-nav-name>span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dsha-nav-file{font-size:10.5px;line-height:1.2;color:var(--dsw-alias-label-secondary);opacity:.75;
+  font-family:ui-monospace,Consolas,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dsha-nav-sep{height:1px;margin:5px 4px;background:var(--dsw-alias-border-l1);opacity:.8}
 .dsha-nav-chips{display:flex;gap:4px;margin-left:auto;flex:none}
 .dsha-nav-chips .dsha-mini{font-size:11px;padding:1px 5px;border:1px solid var(--dsw-alias-border-l1);border-radius:6px}
@@ -1709,6 +1713,14 @@ window.__ModuleLoader__.load({
       const size = Number(bytes)
       if (!Number.isFinite(size) || size <= 0) return false
       return textBytes(typeof text === 'string' ? text : '') !== size
+    }
+
+    /** 文档键 → 文件名（file:<尾巴>/<名> → 名；聊天键返回空串）。 */
+    function fileNameOfKey(key) {
+      const k = typeof key === 'string' ? key : ''
+      if (k.indexOf('file:') !== 0) return ''
+      const at = k.indexOf('/', 5)
+      return at > 5 ? k.slice(at + 1) : ''
     }
 
     function freshDiskDocs(bucket, items, tail, now) {
@@ -4984,7 +4996,7 @@ window.__ModuleLoader__.load({
 
     const DOC_PATH = '对话文档'
     /* 文档栏上会显示它：一眼看出跑的是不是刚改的那份客户端。 */
-    const PLUGIN_VERSION = '0.113.8'
+    const PLUGIN_VERSION = '0.113.9'
 
     /** 在聊天流里找最新一份 ```dsh-doc 围栏（助手输出的文档）。 */
     /** 测量包一层（7.2）：真实实现在 scanDocBlocksRaw。 */
@@ -8486,7 +8498,11 @@ window.__ModuleLoader__.load({
                         }, expanded ? '▾' : '▸')
                         : null,
                       h('span', { className: 'dsha-nav-ico' }, typeIconOf(group.title)),
-                      h('span', null, group.title),
+                      h('span', { className: 'dsha-nav-name' },
+                        h('span', null, group.title),
+                        fileNameOfKey(newest.key) === ''
+                          ? null
+                          : h('span', { className: 'dsha-nav-file', title: fileNameOfKey(newest.key) }, fileNameOfKey(newest.key))),
                       group.versions.length > 1
                         ? h('span', { style: { flex: 'none', marginLeft: 'auto', color: 'var(--dsw-alias-label-secondary)' } },
                           String(group.versions.length) + ' 版')
@@ -8510,7 +8526,11 @@ window.__ModuleLoader__.load({
                           setNavOpen(false)
                         },
                       },
-                        h('span', null, '第 ' + String(group.versions.length - number) + ' 版 · ' + whenText(entry.at)),
+                        h('span', { className: 'dsha-nav-name' },
+                          h('span', null, '第 ' + String(group.versions.length - number) + ' 版 · ' + whenText(entry.at)),
+                          fileNameOfKey(entry.key) === ''
+                            ? null
+                            : h('span', { className: 'dsha-nav-file', title: fileNameOfKey(entry.key) }, fileNameOfKey(entry.key))),
                         number === 0
                           ? h('span', { style: { flex: 'none', color: '#8aa0ff' } }, '最新')
                           : null))
