@@ -1477,6 +1477,23 @@ window.__ModuleLoader__.load({
      * 纯函数：磁盘清单里哪些条目本会话库里还没有（按会话尾巴过滤 + 去掉 .md 后缀）。
      * items: [{ file, title, mtime }]；bucket: 本会话文档库。
      * 返回 [{ key, file, title, at }]。 */
+    /**
+     * 纯函数：列表去重 —— 同一个标题既有聊天键条目又有文件条目时，只留文件条目。
+     * 聊天键那条是当初从聊天里扫到的旧副本，和磁盘上的文件同名但内容可能不同（用户看到的"2 版"）。 */
+    function dedupeDocList(entries) {
+      const list = Array.isArray(entries) ? entries : []
+      const fileTitles = new Set()
+      for (const one of list) {
+        const key = String(one === null || one === undefined ? '' : one.key)
+        if (key.indexOf('file:') === 0) fileTitles.add(String(one.title || ''))
+      }
+      return list.filter((one) => {
+        const key = String(one === null || one === undefined ? '' : one.key)
+        if (key.indexOf('file:') === 0) return true
+        return fileTitles.has(String(one.title || '')) !== true
+      })
+    }
+
     function freshDiskDocs(bucket, items, tail, now) {
       const out = []
       const mine = bucket === null || bucket === undefined ? {} : bucket
@@ -1487,11 +1504,13 @@ window.__ModuleLoader__.load({
         /* 键必须**保留 .md**：readDocFile / 历史库里的文件键都是 `file:<尾巴>/<名>.md`，
            0.112.5 这里去掉了后缀，导致同一个文件在库里出现两条（列表标题和打开的文档对不上，2026-11-27）。 */
         const key = tail + file
-        const alt = tail + file.replace(/\.md$/iu, '')
-        if (mine[key] !== undefined || mine[alt] !== undefined) continue
+        const shortKey = tail + file.replace(/\.md$/iu, '')
+        if (mine[key] !== undefined) continue
+        const replaces = mine[shortKey] !== undefined ? shortKey : ''
         out.push({
           key,
           file,
+          replaces,
           title: typeof item.title === 'string' && item.title !== '' ? item.title : file,
           at: Number(item.mtime) || Number(now) || 0,
         })
@@ -1549,12 +1568,14 @@ window.__ModuleLoader__.load({
           text = ''
         }
         if (text === '') continue
+        if (typeof one.replaces === 'string' && one.replaces !== '') delete nextBucket[one.replaces]
         nextBucket[one.key] = { title: one.title, text, at: one.at, sid: sessionId, trusted: true }
         loaded.push({ ...one, text })
       }
       if (loaded.length === 0) return
       libCommit(sessionId, nextBucket)
-      if (firstSync === true) return
+      /* 首次同步也切到最新那份：以前首次只登记不切，于是启动时采纳到旧文档后永不改动，
+         列表里「最新」是新的、正文还是旧的（2026-11-27 用户报的"文件名和文档没对上"）。 */
       const newest = loaded.slice().sort((a, b) => b.at - a.at)[0]
       const current = state.doc
       if (current !== null && current !== undefined && current.local === true) return
@@ -4665,7 +4686,7 @@ window.__ModuleLoader__.load({
 
     const DOC_PATH = '对话文档'
     /* 文档栏上会显示它：一眼看出跑的是不是刚改的那份客户端。 */
-    const PLUGIN_VERSION = '0.112.7'
+    const PLUGIN_VERSION = '0.112.8'
 
     /** 在聊天流里找最新一份 ```dsh-doc 围栏（助手输出的文档）。 */
     function scanDocBlocks() {
@@ -6619,14 +6640,15 @@ window.__ModuleLoader__.load({
         ? store.docs[sessionId]
         : EMPTY_LIB
       /* 见过的文档都留在库里：聊天流里滚出去、折叠掉的也算，切回来还能看。按会话分开列。 */
-      const docs = React.useMemo(() => Object.entries(library)
+      const docs = React.useMemo(() => dedupeDocList(Object.entries(library)
         .map(([key, value]) => ({ key, title: value.title, text: value.text, at: value.at, sid: value.sid, trusted: value.trusted }))
         /* 只列本会话的：没有 sid 的老条目一律不列；不可信的（归属没被本会话聊天确认过）也不列。 */
         .filter(entry => entry.sid === sessionId && entry.trusted !== false)
         /* 同一条尾巴规则：file:<别的会话>/… 的老条目不再列到本会话里。 */
         .filter(entry => String(entry.key).indexOf('file:') !== 0
           || String(entry.key).indexOf('file:' + sessionTail(sessionId) + '/') === 0)
-        .sort((a, b) => b.at - a.at), [library, sessionId])
+        .sort((a, b) => b.at - a.at)
+        ), [library, sessionId])
       /* pick 为空 = 跟着聊天走（最新那份）；否则只读查看历史某一份。 */
       /* 兜底：state.doc 的 sid 过期（宿主重启/会话重建换过 id），但本会话文档库里明明存着它 ——
          直接拿库里的那份显示。虚拟列表把 dsh-doc 块卸掉之后，文档栏就是靠这条不空着。 */
@@ -8750,7 +8772,7 @@ window.__ModuleLoader__.load({
       /** 只读测试出口：给离线脚本验证拼装逻辑用，运行时没人调它。 */
       __test: {
         buildPayload, planBatches, addAnnotation, clipQuote, normalizePath,
-        migrateItem, readState, resolveTarget, decideKind, parseReactions, demoteChatTrust, freshDiskDocs, healDiskKeys,
+        migrateItem, readState, resolveTarget, decideKind, parseReactions, demoteChatTrust, freshDiskDocs, healDiskKeys, dedupeDocList,
         parseReactionRows, reactionRows, reactionText, mergeReactionText,
         locateQuote, bestCommonSpan, subsequenceStats, expandToSentence, fuzzyQuoteInBlock, clipToBlockEnd, menuSkipSelector: MENU_SKIP_SELECTOR,
         sanitizeSvg, svgSizeOf, svgLabelOf, safeFileName, parseMarkdownDoc, docToMarkdown,
