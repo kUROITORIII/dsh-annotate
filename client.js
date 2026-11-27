@@ -569,7 +569,7 @@ window.__ModuleLoader__.load({
     const TARGET_TTL = 60000
 
     function emptyState() {
-      return { schema: SCHEMA, batchSeq: 0, sessions: {}, open: false, active: null, undo: null, surface: null, debug: '', ui: null, collapsed: {}, docOpen: false, docPending: null, docToolbar: null, doc: null, docEditing: false, docThread: null, docThreadBox: null, docWide: false, docWideBox: null, docFloatBox: null, docDrawer: false, docDrawerW: 340, docPick: '', docView: null, docFont: 15, docFontLocal: false, docs: {}, docLibraryLegacy: null, docMigration: null, sentTail: '', sentTails: [], picked: {}, reanchorId: '', reanchorHint: '', autoDoc: true, autoDocLocal: false, hideDocBlocks: true, docSeen: '', onlyQueued: false, onlyLost: false, keepReplyWindow: 4, docFind: '', docFindAt: 0, docFindOpen: false, reactions: '', wideRightClick: true, dockDocTab: false, docDetached: false }
+      return { schema: SCHEMA, batchSeq: 0, sessions: {}, open: false, active: null, undo: null, surface: null, debug: '', ui: null, collapsed: {}, docOpen: false, docPending: null, docToolbar: null, doc: null, docEditing: false, docThread: null, docThreadBox: null, docWide: false, docWideBox: null, docFloatBox: null, docDrawer: false, docDrawerW: 340, docPick: '', docView: null, docFont: 15, docFontLocal: false, docs: {}, docLibraryLegacy: null, docMigration: null, docDemote: true, docDemoted: 0, sentTail: '', sentTails: [], picked: {}, reanchorId: '', reanchorHint: '', autoDoc: true, autoDocLocal: false, hideDocBlocks: true, docSeen: '', onlyQueued: false, onlyLost: false, keepReplyWindow: 4, docFind: '', docFindAt: 0, docFindOpen: false, reactions: '', wideRightClick: true, dockDocTab: false, docDetached: false }
     }
 
     /** 聊天引文可以压空白；文件引文必须逐字保留换行，否则模型定位不到原文。 */
@@ -814,6 +814,18 @@ window.__ModuleLoader__.load({
           base.docs = migrated.docs
           base.docMigration = { from: Number(parsed.schema) || 2, kept: migrated.kept, orphans: migrated.orphans, skipped: false }
         }
+        /* 0.112.1：一次性把**聊天键**条目降级为不可信。
+           原因：0.111 及更早时期，切会话瞬间聊天区 DOM 可能还是上一个会话的，
+           扫描会把 A 的文档以 B 的 sid 写进库并标成可信（trusted=true）。
+           这种条目在分桶之后仍会显示在 B 里（2026-11-27 现场：99b5ca3a 显示 059068b6 的「技能三层机制」）。
+           降级之后：只有当它自己的会话里聊天重新扫到同一份正文时，才会再被标回可信。
+           只做一次（docDemote 标记），不影响正常使用。 */
+        if (parsed.docDemote !== true) {
+          const demoted = demoteChatTrust(base.docs)
+          base.docs = demoted.docs
+          base.docDemoted = demoted.demoted
+        }
+        base.docDemote = true
         if (parsed.dockDocTab === true) base.dockDocTab = true
       if (parsed.docWideBox !== null && typeof parsed.docWideBox === 'object') {
           const box = parsed.docWideBox
@@ -947,6 +959,8 @@ window.__ModuleLoader__.load({
           docFont: state.docFont,
           /* schema 3：按会话分桶的文档库。 */
           docs: state.docs,
+          docDemote: state.docDemote === true,
+          docDemoted: typeof state.docDemoted === 'number' ? state.docDemoted : 0,
           /* 旧的全局库：只为回滚保留，原样写回、不再更新（0.113 起删除）。 */
           ...(state.docLibraryLegacy !== null && state.docLibraryLegacy !== undefined ? { docLibrary: state.docLibraryLegacy } : {}),
           docWideBox: state.docWideBox,
@@ -1199,6 +1213,31 @@ window.__ModuleLoader__.load({
         if (Object.keys(clean).length > 0) docs[sid] = clean
       }
       return docs
+    }
+
+    /**
+     * 一次性把所有「聊天键」条目的可信标记降级（纯函数、幂等）。
+     * 文件键不动：目录就是归属证据。
+     * 返回 { docs, demoted }。 */
+    function demoteChatTrust(docs) {
+      const out = {}
+      let demoted = 0
+      if (docs === null || docs === undefined || typeof docs !== 'object') return { docs: out, demoted }
+      for (const [sid, bucket] of Object.entries(docs)) {
+        if (bucket === null || typeof bucket !== 'object') continue
+        const clean = {}
+        for (const [key, entry] of Object.entries(bucket)) {
+          if (String(key).indexOf('file:') === 0) { clean[key] = entry; continue }
+          if (entry !== null && entry !== undefined && entry.trusted === true) {
+            clean[key] = { ...entry, trusted: false }
+            demoted += 1
+          } else {
+            clean[key] = entry
+          }
+        }
+        out[sid] = clean
+      }
+      return { docs: out, demoted }
     }
 
     /** 桶太大就按 at 留最近 limit 条；keepKey 那条必留。纯函数。 */
@@ -4468,7 +4507,7 @@ window.__ModuleLoader__.load({
 
     const DOC_PATH = '对话文档'
     /* 文档栏上会显示它：一眼看出跑的是不是刚改的那份客户端。 */
-    const PLUGIN_VERSION = '0.112.0'
+    const PLUGIN_VERSION = '0.112.1'
 
     /** 在聊天流里找最新一份 ```dsh-doc 围栏（助手输出的文档）。 */
     function scanDocBlocks() {
@@ -8520,7 +8559,7 @@ window.__ModuleLoader__.load({
       /** 只读测试出口：给离线脚本验证拼装逻辑用，运行时没人调它。 */
       __test: {
         buildPayload, planBatches, addAnnotation, clipQuote, normalizePath,
-        migrateItem, readState, resolveTarget, decideKind, parseReactions,
+        migrateItem, readState, resolveTarget, decideKind, parseReactions, demoteChatTrust,
         parseReactionRows, reactionRows, reactionText, mergeReactionText,
         locateQuote, bestCommonSpan, subsequenceStats, expandToSentence, fuzzyQuoteInBlock, clipToBlockEnd, menuSkipSelector: MENU_SKIP_SELECTOR,
         sanitizeSvg, svgSizeOf, svgLabelOf, safeFileName, parseMarkdownDoc, docToMarkdown,
