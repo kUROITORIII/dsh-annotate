@@ -76,7 +76,8 @@ window.__ModuleLoader__.load({
 .dsha-tag[data-kind="edit"]{color:var(--dsw-alias-state-warn-primary);border-color:currentColor}
 .dsha-tag[data-kind="question"]{color:var(--dsw-alias-brand-primary);border-color:currentColor}
 .dsha-mini{border:none;background:transparent;color:var(--dsw-alias-label-secondary);font-size:12px;
-  cursor:pointer;padding:2px 4px;border-radius:4px;font-family:inherit}
+  cursor:pointer;padding:2px 4px;border-radius:4px;font-family:inherit;
+  display:inline-flex;align-items:center;gap:6px;max-width:320px}
 .dsha-mini:hover{background:var(--dsw-alias-bg-base);color:var(--dsw-alias-state-error-primary)}
 .dsha-mini[data-on="1"]{color:var(--dsw-alias-brand-primary);font-weight:600}
 .dsha-nav-ico{flex:none;width:1.1em;text-align:center;color:var(--dsw-alias-label-secondary)}
@@ -297,9 +298,11 @@ window.__ModuleLoader__.load({
 .dsha-nav-item span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dsha-nav-name{display:flex;flex-direction:column;gap:1px;min-width:0;flex:1}
 .dsha-nav-name>span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.dsha-doc-file{display:inline-flex;align-items:center;height:22px;font-size:11.5px;line-height:1;
+.dsha-doc-count{flex:none}
+.dsha-doc-caret{flex:none;opacity:.8}
+.dsha-doc-file{display:inline-flex;align-items:center;height:18px;font-size:11.5px;line-height:1;min-width:0;
   color:var(--dsw-alias-label-secondary);opacity:.85;max-width:220px;
-  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,Consolas,monospace;margin-left:2px}
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:ui-monospace,Consolas,monospace}
 .dsha-nav-file{font-size:10.5px;line-height:1.2;color:var(--dsw-alias-label-secondary);opacity:.75;
   font-family:ui-monospace,Consolas,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .dsha-nav-sep{height:1px;margin:5px 4px;background:var(--dsw-alias-border-l1);opacity:.8}
@@ -4999,7 +5002,7 @@ window.__ModuleLoader__.load({
 
     const DOC_PATH = '对话文档'
     /* 文档栏上会显示它：一眼看出跑的是不是刚改的那份客户端。 */
-    const PLUGIN_VERSION = '0.114.1'
+    const PLUGIN_VERSION = '0.114.2'
 
     /** 在聊天流里找最新一份 ```dsh-doc 围栏（助手输出的文档）。 */
     /** 测量包一层（7.2）：真实实现在 scanDocBlocksRaw。 */
@@ -8458,14 +8461,13 @@ window.__ModuleLoader__.load({
               className: navOpen ? 'dsha-mini dsha-mini-on' : 'dsha-mini',
               title: '这个对话里的所有文档',
               onClick: () => setNavOpen(value => !value),
-            }, String(docs.length) + ' 份 ▾'),
-            /* 当前文档的真实文件名：放在「份数」按钮右边、常显，用来核对标题与文件是否一致。 */
-            (doc === null || doc === undefined ? '' : fileNameOfKey(doc.key)) === ''
-              ? null
-              : h('span', {
-                className: 'dsha-doc-file',
-                title: '当前文档的文件名：' + fileNameOfKey(doc.key),
-              }, fileNameOfKey(doc.key)),
+            },
+              /* 文件名并进按钮内部：整条（份数 + 文件名 + ▾）都可点，打开同一个下拉。 */
+              h('span', { className: 'dsha-doc-count' }, String(docs.length) + ' 份'),
+              (doc === null || doc === undefined ? '' : fileNameOfKey(doc.key)) === ''
+                ? null
+                : h('span', { className: 'dsha-doc-file' }, fileNameOfKey(doc.key)),
+              h('span', { className: 'dsha-doc-caret' }, '▾')),
             /* 左侧那个「✎ 批注」按钮在聊天标题栏，常被别的层盖住点不动；
                这里再给一个入口，位置在文档栏，肯定点得到。 */
             h('button', {
