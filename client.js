@@ -4686,7 +4686,7 @@ window.__ModuleLoader__.load({
 
     const DOC_PATH = '对话文档'
     /* 文档栏上会显示它：一眼看出跑的是不是刚改的那份客户端。 */
-    const PLUGIN_VERSION = '0.112.8'
+    const PLUGIN_VERSION = '0.112.9'
 
     /** 在聊天流里找最新一份 ```dsh-doc 围栏（助手输出的文档）。 */
     function scanDocBlocks() {
@@ -6897,8 +6897,10 @@ window.__ModuleLoader__.load({
             const nextLibrary = { ...libOf(sessionId) }
             let dirty = false
             /* 只在本会话确实是当前会话、且切进来已满 900ms 时入库：切会话那一两拍 DOM 可能还是旧会话的。 */
-            const settled = (runtime.lastSid === undefined || runtime.lastSid === null
-              || runtime.lastSid === sessionId) && Date.now() - startedAt >= 900
+            /* 只按「挂载后 900ms」判断：切会话的瞬间聊天区 DOM 可能还是上一个会话的，先别入库。
+               以前还要求 runtime.lastSid === sessionId，而 lastSid 只有右键批注才更新，
+               于是从不右键的会话永远不入库（2026-11-27）。 */
+            const settled = Date.now() - startedAt >= 900
             for (const entry of scanned) {
               if (settled !== true) continue
               const prev = nextLibrary[entry.key]
@@ -7078,10 +7080,10 @@ window.__ModuleLoader__.load({
           })
         }
         const tick = () => {
-          /* 只让「当前会话」的那个面板写文档。页签和窗口可能同时存在，
-             另一个实例写进来就会被本实例当成「不是我的」再抢回去 —— 面板就这样每拍跳一次。 */
-          if (runtime.lastSid !== undefined && runtime.lastSid !== null
-            && runtime.lastSid !== sessionId && typeof runtime.lastSid === 'string') return
+          /* 0.112.9：**删掉这里原来的会话守卫**。它用 runtime.lastSid（只有用户右键批注过才会更新）
+             和当前会话比，不相等就直接返回 —— 结果在这个会话里没右键过时，整个文档轮询一次都不跑，
+             磁盘同步、库采纳、文件刷新全部停摆（2026-11-27 用户报「新写的文档永远不出现」的真凶）。
+             单实例现在由 docBelongsTo + 按会话分桶保证，不需要这层守卫。 */
           runtime.docWhy = ''
           /* 首次加载本会话文档前写两行诊断（每个会话一次，不带正文）。 */
           sendDocDiag(sessionId)
