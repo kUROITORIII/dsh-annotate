@@ -4170,7 +4170,7 @@ window.__ModuleLoader__.load({
 
     const DOC_PATH = '对话文档'
     /* 文档栏上会显示它：一眼看出跑的是不是刚改的那份客户端。 */
-    const PLUGIN_VERSION = '0.110.0'
+    const PLUGIN_VERSION = '0.110.1'
 
     /** 在聊天流里找最新一份 ```dsh-doc 围栏（助手输出的文档）。 */
     function scanDocBlocks() {
@@ -6077,10 +6077,15 @@ window.__ModuleLoader__.load({
          于是别的会话的文档也能盖着「本会话」的章显示出来（用户 2026-11-27 报的现象）。 */
       const ownTail = 'file:' + sessionTail(sessionId) + '/'
       const docKeyRaw = store.doc !== null && store.doc !== undefined && typeof store.doc.key === 'string' ? store.doc.key : ''
-      const docKeyMine = docKeyRaw.indexOf('file:') !== 0 || docKeyRaw.indexOf(ownTail) === 0
       const docSession = store.doc !== null && store.doc !== undefined ? store.doc.sid : undefined
+      /* 归属只有两种合法证据：
+         ① 文件键 file:<tail>/… 的 tail === 本会话尾巴；
+         ② 聊天键（不以 file: 开头）必须显式带本会话 sid。
+         以前对「没有 sid 的老数据」放行，结果这种文档在每个会话里都会显示。 */
+      const docKeyMine = docKeyRaw.indexOf('file:') === 0
+        ? docKeyRaw.indexOf(ownTail) === 0
+        : (typeof docSession === 'string' && docSession === sessionId)
       const docStored = store.doc !== null && store.doc !== undefined && docKeyMine
-        && (docSession === undefined || docSession === null || docSession === sessionId)
         ? store.doc
         : null
       const editing = store.docEditing === true && (store.docPick === '' || store.docPick === undefined)
@@ -6521,10 +6526,13 @@ window.__ModuleLoader__.load({
           runtime.docWhy = ''
           /* 面板里这份如果属于别的会话（按文件目录判），先放下：本会话的文档要么从聊天进来，
              要么从文档库 / 磁盘恢复。否则就会出现「这个会话的文档在别的会话窗口里」。 */
-          if (state.doc !== null && state.doc !== undefined && typeof state.doc.key === 'string'
-            && String(state.doc.key).indexOf('file:') === 0
-            && String(state.doc.key).indexOf(ownTail) !== 0) {
-            commit({ doc: null, docPick: '', docView: null })
+          if (state.doc !== null && state.doc !== undefined) {
+            const keyOfDoc = typeof state.doc.key === 'string' ? state.doc.key : ''
+            const sidOfDoc = typeof state.doc.sid === 'string' ? state.doc.sid : ''
+            const mine = keyOfDoc.indexOf('file:') === 0
+              ? keyOfDoc.indexOf(ownTail) === 0
+              : (sidOfDoc !== '' && sidOfDoc === sessionId)
+            if (!mine) commit({ doc: null, docPick: '', docView: null })
           }
           load()
           adoptFromLibrary()
