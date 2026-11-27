@@ -956,11 +956,15 @@ window.__ModuleLoader__.load({
       return colLetters(col) + String(r + 1)
     }
 
-    /** 单元格批注的引文：`B3: 12.5%`。 */
-    function cellQuote(rows, row, col) {
+    /** 单元格的值（不带单元格名）。 */
+    function cellValue(rows, row, col) {
       const line = Array.isArray(rows) ? rows[row] : undefined
-      const value = Array.isArray(line) && line[col] !== undefined && line[col] !== null ? String(line[col]) : ''
-      return cellLabel(row, col) + ': ' + value
+      return Array.isArray(line) && line[col] !== undefined && line[col] !== null ? String(line[col]) : ''
+    }
+
+    /** 单元格在正文里的文本：`B3: 12.5%`（锚点匹配、断言找原文都用它）。 */
+    function cellQuote(rows, row, col) {
+      return cellLabel(row, col) + ': ' + cellValue(rows, row, col)
     }
 
     /** 偏移 → 行号（从 1 起），纯文本批注发出去写成 `文件:行号`。 */
@@ -5266,7 +5270,7 @@ window.__ModuleLoader__.load({
 
     const DOC_PATH = '对话文档'
     /* 文档栏上会显示它：一眼看出跑的是不是刚改的那份客户端。 */
-    const PLUGIN_VERSION = '0.115.0'
+    const PLUGIN_VERSION = '0.115.1'
 
     /** 在聊天流里找最新一份 ```dsh-doc 围栏（助手输出的文档）。 */
     /** 测量包一层（7.2）：真实实现在 scanDocBlocksRaw。 */
@@ -7246,7 +7250,9 @@ window.__ModuleLoader__.load({
         const target = event.target
         if (target instanceof Element && target.closest('[data-mark]') !== null) return
         if (typeof sessionId !== 'string' || sessionId === '') return
-        const quote = cellQuote(rows, r, c)
+        /* 引文只放单元格的值：发出去那行已经是「文件名 · A2 「值」」，
+           再把 A2 写进引文会变成「A2 「A2: 值」」（2026-11-28 实测）。 */
+        const quote = cellValue(rows, r, c) === '' ? cellQuote(rows, r, c) : cellValue(rows, r, c)
         const rect = event.currentTarget.getBoundingClientRect()
         setSelected(String(r) + ':' + String(c))
         runtime.target = {
@@ -9733,7 +9739,7 @@ window.__ModuleLoader__.load({
         shouldScanNow, perfLine, perfBlank, spliceLegacy, rafGeom, scanTuning: SCAN,
         migrateDocLibrary, sanitizeDocs, keyFitsSession, fileKeyTail, docBelongsTo, trimBucket, trimDocs, docDiagLines, sidBrief,
         /* 0.115 · P1 */
-        sanitizeRef, sanitizeLocator, colLetters, cellLabel, cellQuote, lineAtOffset, renderOneLine,
+        sanitizeRef, sanitizeLocator, colLetters, cellLabel, cellQuote, cellValue, lineAtOffset, renderOneLine,
         fileKindOfName, isFileDoc, fileDocOf, fileOpenNotice, docForStorage, fileDocBlocks, docFingerprint, fileTargetExtra,
         libOf: (sid) => libOf(sid),
         stateOf: () => state,
