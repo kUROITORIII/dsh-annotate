@@ -5427,7 +5427,7 @@ window.__ModuleLoader__.load({
 
     const DOC_PATH = '对话文档'
     /* 文档栏上会显示它：一眼看出跑的是不是刚改的那份客户端。 */
-    const PLUGIN_VERSION = '0.120.0'
+    const PLUGIN_VERSION = '0.120.1'
 
     /** 在聊天流里找最新一份 ```dsh-doc 围栏（助手输出的文档）。 */
     /** 测量包一层（7.2）：真实实现在 scanDocBlocksRaw。 */
@@ -7435,6 +7435,61 @@ window.__ModuleLoader__.load({
         }
         return options.slice(0, 12)
       }
+      /* 状态选项：预设（对齐 Notion Presets）+ 自己加的值 + 每个值的颜色 + 本地隐藏。 */
+      const STATUS_PRESETS = [
+        { name: '状态 Status', values: ['未开始', '进行中', '已完成', '已取消', '阻塞'] },
+        { name: '优先级 Priority', values: ['高', '中', '低'] },
+        { name: '是否 Yes / No', values: ['是', '否'] },
+        { name: '审批 Approval', values: ['待审批', '已通过', '已驳回'] },
+        { name: '健康度 Health', values: ['正常', '有风险', '阻塞'] },
+        { name: '尺寸 Size', values: ['S', 'M', 'L', 'XL'] },
+      ]
+      const STATUS_TONES = ['red', 'orange', 'yellow', 'green', 'teal', 'blue', 'purple', 'magenta']
+      const TONE_LABEL = { red: '红', orange: '橙', yellow: '黄', green: '绿', teal: '青', blue: '蓝', purple: '紫', magenta: '品红', gray: '灰' }
+      /** 这一列的状态选项存哪儿：文件 + 工作表 + 列号（只存本地，不写进文件）。 */
+      const optsKeyOf = (c) => 'dsha-status-opts/v1:'
+        + String(doc !== null && doc !== undefined && doc.fileName ? doc.fileName : '') + '#' + sheet + '#' + String(c)
+      const readOpts = (c) => {
+        const empty = { custom: [], colors: {}, hidden: [] }
+        try {
+          const raw = window.localStorage.getItem(optsKeyOf(c))
+          if (raw === null) return empty
+          const one = JSON.parse(raw)
+          if (one === null || typeof one !== 'object') return empty
+          return {
+            custom: Array.isArray(one.custom) ? one.custom.filter(v => typeof v === 'string' && v !== '') : [],
+            colors: one.colors !== null && typeof one.colors === 'object' ? one.colors : {},
+            hidden: Array.isArray(one.hidden) ? one.hidden.filter(v => typeof v === 'string') : [],
+          }
+        } catch (error) {
+          return empty
+        }
+      }
+      const writeOpts = (c, one) => {
+        try {
+          const next = { custom: one.custom.slice(0, 24), colors: one.colors, hidden: one.hidden.slice(0, 48) }
+          window.localStorage.setItem(optsKeyOf(c), JSON.stringify(next))
+        } catch (error) { /* 存不下不影响写回 */ }
+      }
+      /** 单元格用色：本地指定优先，其次按关键词。 */
+      const toneForCell = (c, value) => {
+        const one = readOpts(c)
+        const text = String(value === undefined || value === null ? '' : value).trim()
+        if (text !== '' && typeof one.colors[text] === 'string' && one.colors[text] !== '') return one.colors[text]
+        return toneOfStatus(text)
+      }
+      /** 这一列能选的值：文件里已有的 + 自己加的 − 本地隐藏的。 */
+      const optionsOfColumn = (c) => {
+        const base = statusOptionsOf(c)
+        if (base === null) return []
+        const one = readOpts(c)
+        const all = []
+        for (const value of [...base, ...one.custom]) {
+          if (value === '' || one.hidden.includes(value)) continue
+          if (all.includes(value) !== true) all.push(value)
+        }
+        return all.slice(0, 18)
+      }
       const commitCell = (r, c, value) => {
         const fileName = fileNameOfDoc()
         if (fileName === '' || typeof sessionId !== 'string' || sessionId === '') return
@@ -7597,61 +7652,6 @@ window.__ModuleLoader__.load({
         ? props.truncated
         : (doc.caps !== null && doc.caps !== undefined && doc.caps.truncated === true)
       /* 候选值浮层：点一个就换值并写回；点别处/按 Esc 关掉。 */
-      /* 状态选项：预设（对齐 Notion Presets）+ 自己加的值 + 每个值的颜色 + 本地隐藏。 */
-      const STATUS_PRESETS = [
-        { name: '状态 Status', values: ['未开始', '进行中', '已完成', '已取消', '阻塞'] },
-        { name: '优先级 Priority', values: ['高', '中', '低'] },
-        { name: '是否 Yes / No', values: ['是', '否'] },
-        { name: '审批 Approval', values: ['待审批', '已通过', '已驳回'] },
-        { name: '健康度 Health', values: ['正常', '有风险', '阻塞'] },
-        { name: '尺寸 Size', values: ['S', 'M', 'L', 'XL'] },
-      ]
-      const STATUS_TONES = ['red', 'orange', 'yellow', 'green', 'teal', 'blue', 'purple', 'magenta']
-      const TONE_LABEL = { red: '红', orange: '橙', yellow: '黄', green: '绿', teal: '青', blue: '蓝', purple: '紫', magenta: '品红', gray: '灰' }
-      /** 这一列的状态选项存哪儿：文件 + 工作表 + 列号（只存本地，不写进文件）。 */
-      const optsKeyOf = (c) => 'dsha-status-opts/v1:'
-        + String(doc !== null && doc !== undefined && doc.fileName ? doc.fileName : '') + '#' + sheet + '#' + String(c)
-      const readOpts = (c) => {
-        const empty = { custom: [], colors: {}, hidden: [] }
-        try {
-          const raw = window.localStorage.getItem(optsKeyOf(c))
-          if (raw === null) return empty
-          const one = JSON.parse(raw)
-          if (one === null || typeof one !== 'object') return empty
-          return {
-            custom: Array.isArray(one.custom) ? one.custom.filter(v => typeof v === 'string' && v !== '') : [],
-            colors: one.colors !== null && typeof one.colors === 'object' ? one.colors : {},
-            hidden: Array.isArray(one.hidden) ? one.hidden.filter(v => typeof v === 'string') : [],
-          }
-        } catch (error) {
-          return empty
-        }
-      }
-      const writeOpts = (c, one) => {
-        try {
-          const next = { custom: one.custom.slice(0, 24), colors: one.colors, hidden: one.hidden.slice(0, 48) }
-          window.localStorage.setItem(optsKeyOf(c), JSON.stringify(next))
-        } catch (error) { /* 存不下不影响写回 */ }
-      }
-      /** 单元格用色：本地指定优先，其次按关键词。 */
-      const toneForCell = (c, value) => {
-        const one = readOpts(c)
-        const text = String(value === undefined || value === null ? '' : value).trim()
-        if (text !== '' && typeof one.colors[text] === 'string' && one.colors[text] !== '') return one.colors[text]
-        return toneOfStatus(text)
-      }
-      /** 这一列能选的值：文件里已有的 + 自己加的 − 本地隐藏的。 */
-      const optionsOfColumn = (c) => {
-        const base = statusOptionsOf(c)
-        if (base === null) return []
-        const one = readOpts(c)
-        const all = []
-        for (const value of [...base, ...one.custom]) {
-          if (value === '' || one.hidden.includes(value)) continue
-          if (all.includes(value) !== true) all.push(value)
-        }
-        return all.slice(0, 18)
-      }
       const pickerNode = picker === null ? null : h('div', {
         className: 'dsha-cell-pick',
         style: { left: String(Math.max(8, picker.x)) + 'px', top: String(picker.y) + 'px' },
