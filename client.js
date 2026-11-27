@@ -1365,6 +1365,23 @@ window.__ModuleLoader__.load({
       if (typeof sid !== 'string' || sid === '' || docDiagSent.has(sid)) return
       docDiagSent.add(sid)
       const lines = docDiagLines(state.docs, state.docLibraryLegacy, state.docMigration, sid, state.doc)
+      /* 诊断加强：把本会话库里的条目逐条写出来（键尾、标题、时间），用来核对「文件名和文档是否对得上」。
+         只在本会话第一次加载时写一次；不带正文。 */
+        try {
+          const bucket = state.docs !== null && state.docs !== undefined && typeof sid === 'string' ? (state.docs[sid] || {}) : {}
+          const entries = Object.entries(bucket)
+            .map(([key, value]) => ({ key: String(key), title: String(value && value.title ? value.title : ''), at: Number(value && value.at) || 0 }))
+            .sort((a, b) => b.at - a.at)
+            .slice(0, 12)
+          for (const one of entries) {
+            const tailPart = one.key.indexOf('/') >= 0 ? one.key.slice(one.key.indexOf('/') + 1) : one.key
+            lines.push('库条目 [' + sessionTail(sid) + '] ' + tailPart + ' | 标题=' + one.title + ' | at=' + new Date(one.at).toISOString().slice(11, 19))
+          }
+          const cur = state.doc
+          if (cur !== null && cur !== undefined) {
+            lines.push('当前文档 [' + sessionTail(sid) + '] key=' + String(cur.key || '') + ' | 标题=' + String(cur.title || '') + ' | 文件名=' + String(cur.fileName || ''))
+          }
+        } catch (error) { /* 诊断失败不影响功能 */ }
       for (const text of lines) {
         try { console.info('[annotate] ' + text) } catch (error) { /* 忽略 */ }
         try {
@@ -4648,7 +4665,7 @@ window.__ModuleLoader__.load({
 
     const DOC_PATH = '对话文档'
     /* 文档栏上会显示它：一眼看出跑的是不是刚改的那份客户端。 */
-    const PLUGIN_VERSION = '0.112.6'
+    const PLUGIN_VERSION = '0.112.7'
 
     /** 在聊天流里找最新一份 ```dsh-doc 围栏（助手输出的文档）。 */
     function scanDocBlocks() {
