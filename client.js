@@ -1467,14 +1467,36 @@ window.__ModuleLoader__.load({
       for (const item of items) {
         const file = String(item === null || item === undefined || item.file === undefined ? '' : item.file)
         if (file.endsWith('.md') !== true) continue
-        const key = tail + file.replace(/\.md$/iu, '')
-        if (mine[key] !== undefined) continue
+        /* 键必须**保留 .md**：readDocFile / 历史库里的文件键都是 `file:<尾巴>/<名>.md`，
+           0.112.5 这里去掉了后缀，导致同一个文件在库里出现两条（列表标题和打开的文档对不上，2026-11-27）。 */
+        const key = tail + file
+        const alt = tail + file.replace(/\.md$/iu, '')
+        if (mine[key] !== undefined || mine[alt] !== undefined) continue
         out.push({
           key,
           file,
           title: typeof item.title === 'string' && item.title !== '' ? item.title : file,
           at: Number(item.mtime) || Number(now) || 0,
         })
+      }
+      return out
+    }
+
+    /**
+     * 纯函数：清掉 0.112.5 造成的重复条目（同一个文件既有 `x.md` 又有 `x` 两种键）。
+     * 保留带 .md 的那条（与磁盘、readDocFile 一致）。返回 { bucket, removed }。 */
+    function healDiskKeys(bucket, items, tail) {
+      const out = { bucket: { ...(bucket === null || bucket === undefined ? {} : bucket) }, removed: 0 }
+      if (Array.isArray(items) !== true) return out
+      for (const item of items) {
+        const file = String(item === null || item === undefined || item.file === undefined ? '' : item.file)
+        if (file.endsWith('.md') !== true) continue
+        const shortKey = tail + file.replace(/\.md$/iu, '')
+        const fullKey = tail + file
+        if (out.bucket[shortKey] !== undefined && out.bucket[fullKey] !== undefined) {
+          delete out.bucket[shortKey]
+          out.removed += 1
+        }
       }
       return out
     }
@@ -1492,6 +1514,8 @@ window.__ModuleLoader__.load({
       }
       if (listed === null || listed.ok !== true || Array.isArray(listed.items) !== true) return
       const tail = 'file:' + sessionTail(sessionId) + '/'
+      const healed = healDiskKeys(libOf(sessionId), listed.items, tail)
+      if (healed.removed > 0) libCommit(sessionId, healed.bucket)
       const bucket = libOf(sessionId)
       const firstSync = runtime.diskKnown[sessionId] !== true
       runtime.diskKnown[sessionId] = true
@@ -4624,7 +4648,7 @@ window.__ModuleLoader__.load({
 
     const DOC_PATH = '对话文档'
     /* 文档栏上会显示它：一眼看出跑的是不是刚改的那份客户端。 */
-    const PLUGIN_VERSION = '0.112.5'
+    const PLUGIN_VERSION = '0.112.6'
 
     /** 在聊天流里找最新一份 ```dsh-doc 围栏（助手输出的文档）。 */
     function scanDocBlocks() {
@@ -8709,7 +8733,7 @@ window.__ModuleLoader__.load({
       /** 只读测试出口：给离线脚本验证拼装逻辑用，运行时没人调它。 */
       __test: {
         buildPayload, planBatches, addAnnotation, clipQuote, normalizePath,
-        migrateItem, readState, resolveTarget, decideKind, parseReactions, demoteChatTrust, freshDiskDocs,
+        migrateItem, readState, resolveTarget, decideKind, parseReactions, demoteChatTrust, freshDiskDocs, healDiskKeys,
         parseReactionRows, reactionRows, reactionText, mergeReactionText,
         locateQuote, bestCommonSpan, subsequenceStats, expandToSentence, fuzzyQuoteInBlock, clipToBlockEnd, menuSkipSelector: MENU_SKIP_SELECTOR,
         sanitizeSvg, svgSizeOf, svgLabelOf, safeFileName, parseMarkdownDoc, docToMarkdown,
