@@ -411,6 +411,9 @@ async function listSessionDocs(root, sessionId, opts) {
   for (const name of names) {
     if (others === true) {
       if (name.endsWith('.md') === true || name === META_NAME) continue
+      /* 0.118.1：写回时留的 `.bak`、Office 的 `~$` 锁文件、临时文件都不要列进来 ——
+         它们出现在列表里只会让用户点到一个「不支持预览」的死行。 */
+      if (/\.bak$|\.tmp$|^~\$/u.test(name) === true) continue
       const full = path.join(dir, name)
       let stat = null
       try {

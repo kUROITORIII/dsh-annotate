@@ -5384,7 +5384,7 @@ window.__ModuleLoader__.load({
 
     const DOC_PATH = '对话文档'
     /* 文档栏上会显示它：一眼看出跑的是不是刚改的那份客户端。 */
-    const PLUGIN_VERSION = '0.118.0'
+    const PLUGIN_VERSION = '0.118.1'
 
     /** 在聊天流里找最新一份 ```dsh-doc 围栏（助手输出的文档）。 */
     /** 测量包一层（7.2）：真实实现在 scanDocBlocksRaw。 */
@@ -7733,7 +7733,8 @@ window.__ModuleLoader__.load({
               kind: String(item.kind === undefined ? '' : item.kind),
               supported: item.supported === true,
               mtime: Number(item.mtime) || 0,
-            })).filter(item => item.file !== ''))
+            /* 0.118.1：`.bak` / `~$` / `.tmp` 不列（宿主也过滤了，这里双保险）。 */
+            })).filter(item => item.file !== '' && /\.bak$|\.tmp$|^~\$/u.test(item.file) !== true))
           } catch (error) {
             if (alive) setExtraFiles([])
           }
