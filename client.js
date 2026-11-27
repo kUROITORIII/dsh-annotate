@@ -1791,6 +1791,7 @@ window.__ModuleLoader__.load({
       /* 0.113.4：已有条目的正文可能和磁盘对不上（旧版本取错文件留下的）。
          按 UTF-8 字节数比对，对不上就重取一次；服务器现在会 404 而不是退回别的文件。 */
       const repaired = { ...bucket }
+      const repairedKeys = new Set()
       let repairCount = 0
       for (const item of (Array.isArray(listed.items) ? listed.items : [])) {
         const file = String(item === null || item === undefined || item.file === undefined ? '' : item.file)
@@ -1803,6 +1804,7 @@ window.__ModuleLoader__.load({
           const got = await fetch('/annotate-doc/latest?sid=' + encodeURIComponent(sessionId) + '&file=' + encodeURIComponent(file)).then(response => response.json())
           if (got !== null && got.ok === true && typeof got.text === 'string' && got.text !== '') {
             repaired[key] = { ...entry, text: got.text, at: Number(item.mtime) || entry.at, title: String(got.title || entry.title) }
+            repairedKeys.add(key)
             repairCount += 1
           }
         } catch (error) { /* 下一轮再试 */ }
@@ -1810,6 +1812,26 @@ window.__ModuleLoader__.load({
       if (repairCount > 0) {
         libCommit(sessionId, repaired)
         logLine('文档修复 [' + sessionTail(sessionId) + '] 重取正文 ' + String(repairCount) + ' 份（字节数和磁盘对不上）')
+        /* 关键：当前文档如果就是被修的那份，要按修好的正文重建。
+           否则 state.doc 里还留着错的 blocks —— 键已经是新文档、正文还是旧的，
+           面板画的正是 doc.blocks，于是「标题和内容对不上」（2026-11-27 现场）。 */
+        const cur = state.doc
+        const curKey = cur !== null && cur !== undefined && typeof cur.key === 'string' ? cur.key : ''
+        if (curKey !== '' && repairedKeys.has(curKey) && cur.local !== true) {
+          const fixed = repaired[curKey]
+          if (fixed !== undefined && typeof fixed.text === 'string') {
+            const freshBlocks = parseMarkdownDoc(fixed.text)
+            runtime.docWhy = 'repair'
+            putDoc({
+              ...cur,
+              blocks: freshBlocks,
+              baseCount: freshBlocks.length,
+              source: fixed.text,
+              title: fixed.title || cur.title,
+              fileName: cur.fileName,
+            })
+          }
+        }
       }
       if (firstSync === true) {
         try { await switchToNewestOnDisk(sessionId) } catch (error) { /* 下一轮再试 */ }
@@ -4962,7 +4984,7 @@ window.__ModuleLoader__.load({
 
     const DOC_PATH = '对话文档'
     /* 文档栏上会显示它：一眼看出跑的是不是刚改的那份客户端。 */
-    const PLUGIN_VERSION = '0.113.5'
+    const PLUGIN_VERSION = '0.113.6'
 
     /** 在聊天流里找最新一份 ```dsh-doc 围栏（助手输出的文档）。 */
     /** 测量包一层（7.2）：真实实现在 scanDocBlocksRaw。 */
@@ -7426,6 +7448,28 @@ window.__ModuleLoader__.load({
           }
           load()
           adoptFromLibrary()
+          /* 通用护栏（0.113.6）：当前文档是「文件键」时，正文必须和库里那条一致。
+             不一致就按库里的重建 —— 修过库、换了文件、或者当初存错正文，都在这里对齐。
+             只处理 file: 键：聊天键在流式生成时正文会持续变，不能按库覆盖。 */
+          {
+            const cur = state.doc
+            const curKey = cur !== null && cur !== undefined && typeof cur.key === 'string' ? cur.key : ''
+            if (curKey.indexOf('file:') === 0 && cur.local !== true) {
+              const entry = libEntryOf(sessionId, curKey)
+              if (entry !== undefined && entry !== null && typeof entry.text === 'string'
+                && entry.text !== '' && entry.text !== cur.source) {
+                const freshBlocks = parseMarkdownDoc(entry.text)
+                runtime.docWhy = 'library-sync'
+                putDoc({
+                  ...cur,
+                  blocks: freshBlocks,
+                  baseCount: freshBlocks.length,
+                  source: entry.text,
+                  title: entry.title || cur.title,
+                })
+              }
+            }
+          }
           /* 聊天里扫不到、库里也没有 → 最后才试磁盘上的文件（方案 B′）。 */
           if (state.doc === null || state.doc === undefined) restoreDocFromFile(sessionId)
           else refreshDocFile(sessionId)
