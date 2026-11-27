@@ -339,7 +339,12 @@ async function saveDoc(root, sessionId, title, text, fileName, tailHint) {
   const dir = path.join(root, hinted === '' ? sessionTailOf(sessionId) : hinted)
   await fs.mkdir(dir, { recursive: true })
   const meta = await readMeta(dir)
-  meta.sid = String(sessionId === undefined || sessionId === null ? '' : sessionId)
+  /* 只有写进「本会话自己的目录」时才记 sid。带 tailHint 往别的会话目录写的时候，
+     以前会把目标目录 _session.json 里的 sid 改成本次写入者的 sid，而 listAll 正是按 meta.sid 列文档，
+     于是别人的目录被认领、文档跟着串会话（2026-11-27 Claude 审计指出）。 */
+  if (hinted === '' || hinted === sessionTailOf(sessionId)) {
+    meta.sid = String(sessionId === undefined || sessionId === null ? '' : sessionId)
+  }
   const wanted = safeSegment(title, 40) || safeSegment(titleFromText(text), 40) || '未命名文档'
   let file = typeof meta.files[wanted] === 'string' ? meta.files[wanted] : ''
   /* 客户端知道这份文档叫什么（`fileName`）：同名/无标题的两份文档按 title 路由会写错文件，

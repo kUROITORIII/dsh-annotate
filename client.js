@@ -803,6 +803,10 @@ window.__ModuleLoader__.load({
               text: value.text,
               at: typeof value.at === 'number' ? value.at : 0,
               sid: typeof value.sid === 'string' ? value.sid : undefined,
+              /* 归属可信度：只有「文件键」或「本会话聊天里真的扫到过」才可信。
+                 旧数据里的聊天键一律先标不可信 —— 它们的 sid 可能早被别的会话改写（2026-11-27）。
+                 等到某个会话的聊天里重新扫到同样的正文，才会被标记为可信。 */
+              trusted: key.indexOf('file:') === 0 ? true : value.trusted === true,
             }
           }
           base.docLibrary = library
@@ -1547,8 +1551,13 @@ window.__ModuleLoader__.load({
       if (typeof doc.source !== 'string' || doc.source === '') return false
       if (typeof doc.sid !== 'string' || doc.sid === '') return false
       if (doc.local === true) return true
-      const fileKnown = typeof doc.fileName === 'string' && doc.fileName !== ''
-      if (fileKnown === true) return false
+      /* 白名单：只有「本会话聊天里真的扫到的那份」才允许落盘（origin 由聊天采纳时打上）。
+         从文档库 / 磁盘采纳来的一律不写 —— 那正是副本自己繁殖、并且写到别人目录的来源
+         （2026-11-27，Claude 审计指出 shouldWriteDoc 用排除法默认 true）。 */
+      if (doc.origin === 'chat') return true
+      return false
+      /* 下面这段保留成注释，说明旧的排除法为什么错：
+         fileKnown === true → false；file: 键 → false；其余 → true（默认放行）。 */
       /* 键是 file:<尾巴>/<名> 就说明这份是从某个会话目录的文件读出来的，一律不回写。
          以前只看 fileName，而「从文档库采纳」的这条路径不带 fileName，
          于是每次启动都把自己再写一遍，在目录里反复长副本（2026-11-27）。 */
@@ -4234,7 +4243,7 @@ window.__ModuleLoader__.load({
 
     const DOC_PATH = '对话文档'
     /* 文档栏上会显示它：一眼看出跑的是不是刚改的那份客户端。 */
-    const PLUGIN_VERSION = '0.110.6'
+    const PLUGIN_VERSION = '0.111.0'
 
     /** 在聊天流里找最新一份 ```dsh-doc 围栏（助手输出的文档）。 */
     function scanDocBlocks() {
@@ -6158,9 +6167,9 @@ window.__ModuleLoader__.load({
       const library = store.docLibrary === undefined || store.docLibrary === null ? {} : store.docLibrary
       /* 见过的文档都留在库里：聊天流里滚出去、折叠掉的也算，切回来还能看。按会话分开列。 */
       const docs = React.useMemo(() => Object.entries(library)
-        .map(([key, value]) => ({ key, title: value.title, text: value.text, at: value.at, sid: value.sid }))
-        /* 只列本会话的：没有 sid 的老条目一律不列（它们会在自己那个会话里被认领回来）。 */
-        .filter(entry => entry.sid === sessionId)
+        .map(([key, value]) => ({ key, title: value.title, text: value.text, at: value.at, sid: value.sid, trusted: value.trusted }))
+        /* 只列本会话的：没有 sid 的老条目一律不列；不可信的（归属没被本会话聊天确认过）也不列。 */
+        .filter(entry => entry.sid === sessionId && entry.trusted !== false)
         /* 同一条尾巴规则：file:<别的会话>/… 的老条目不再列到本会话里。 */
         .filter(entry => String(entry.key).indexOf('file:') !== 0
           || String(entry.key).indexOf('file:' + sessionTail(sessionId) + '/') === 0)
@@ -6173,7 +6182,8 @@ window.__ModuleLoader__.load({
         const mine = Object.keys(library)
           .map(key => [key, library[key]])
           .filter(([, entry]) => entry !== null && entry !== undefined
-            && entry.sid === sessionId && typeof entry.text === 'string' && entry.text !== '')
+            && entry.sid === sessionId && entry.trusted !== false
+            && typeof entry.text === 'string' && entry.text !== '')
           .sort((a, b) => Number(b[1].at === undefined ? 0 : b[1].at) - Number(a[1].at === undefined ? 0 : a[1].at))
         if (mine.length === 0) return null
         const blocks = parseMarkdownDoc(mine[0][1].text)
@@ -6407,10 +6417,25 @@ window.__ModuleLoader__.load({
             const currentLibrary = state.docLibrary === undefined || state.docLibrary === null ? {} : state.docLibrary
             const nextLibrary = { ...currentLibrary }
             let dirty = false
+            /* 只在本会话确实是当前会话时入库（切会话那一拍 DOM 可能还是旧的）。 */
+            const settled = runtime.lastSid === undefined || runtime.lastSid === null
+              || runtime.lastSid === sessionId
             for (const entry of scanned) {
+              if (settled !== true) continue
               const prev = nextLibrary[entry.key]
-              if (prev !== undefined && prev.text === entry.text && prev.title === entry.title) continue
-              nextLibrary[entry.key] = { title: entry.title, text: entry.text, at: Date.now(), sid: sessionId }
+              if (prev !== undefined && prev.text === entry.text && prev.title === entry.title) {
+                /* 内容没变：只补「可信」标记，绝不动它原来的 sid。 */
+                if (prev.trusted !== true) { nextLibrary[entry.key] = { ...prev, trusted: true }; dirty = true }
+                continue
+              }
+              nextLibrary[entry.key] = {
+                title: entry.title,
+                text: entry.text,
+                at: Date.now(),
+                /* **绝不覆盖已有的 sid**：覆盖就等于把别的会话的文档偷到自己名下。 */
+                sid: (prev !== undefined && typeof prev.sid === 'string' && prev.sid !== '') ? prev.sid : sessionId,
+                trusted: true,
+              }
               dirty = true
             }
             if (dirty) {
@@ -6496,11 +6521,9 @@ window.__ModuleLoader__.load({
           /* 本地改过就先不覆盖，等用户点「载入最新版」。 */
           if (current !== null && current.local === true) return
           if (current !== null && current.source === scan.found) {
-            /* 内容没变，但 sid 可能已经过期：宿主重启/会话重建会给同一个对话换新的 session id，
-               按会话隔离的文档就再也显示不出来（文档栏「还没有文档」、批注数归零）。
-               聊天里当下就摆着同一份 dsh-doc 块 —— 它确实是这个对话的正文，认领过来。 */
-            const oldSid = typeof current.sid === 'string' ? current.sid : ''
-            if (oldSid !== '' && oldSid !== sessionId) putDoc({ ...current, sid: sessionId })
+            /* 内容相同就到此为止。以前这里会把 sid 改写成当前会话（“聊天里摆着同一份，认领过来”），
+               那等于用“内容像”当归属证据 —— 别的会话的文档就这样被永久偷过来（2026-11-27 修）。
+               归属只认两件事：文件键的目录尾巴、本会话聊天里扫到并在库里的 trusted 标记。 */
             return
           }
           /* 流式生成期间内容每拍都在变：等它连续两拍不变才动，否则面板会一直闪（2026-11-26 的现场）。 */
@@ -6520,7 +6543,7 @@ window.__ModuleLoader__.load({
           docSwitchCount += 1
           if (action === 'update') {
             /* 同一块定稿/变长：就地更新内容，保留 key 与标题，不新建文档。 */
-            putDoc({ ...current, blocks: fullBlocks, baseCount: fullBlocks.length, source: scan.found, editedAt: Date.now() })
+            putDoc({ ...current, blocks: fullBlocks, baseCount: fullBlocks.length, source: scan.found, editedAt: Date.now(), origin: 'chat' })
             return
           }
           adoptedSetOf(sessionId).add(chatKey)
@@ -6528,6 +6551,7 @@ window.__ModuleLoader__.load({
           putDoc({
             id: 'main',
             sid: sessionId,
+            origin: 'chat',
             key: chatKey,
             /* title 必须给：落盘按它起文件名，缺了就只能拿正文首行猜，同一份内容会被写成好几个文件。 */
             title: (heading === null ? plain : heading[1]).replace(/[*`]/gu, '').trim().slice(0, 40),
@@ -6549,7 +6573,7 @@ window.__ModuleLoader__.load({
           const mine = Object.keys(lib)
             .map(key => [key, lib[key]])
             .filter(([key, entry]) => entry !== null && entry !== undefined
-              && entry.sid === sessionId && typeof entry.text === 'string' && entry.text !== '')
+              && entry.sid === sessionId && entry.trusted !== false && typeof entry.text === 'string' && entry.text !== '')
             .filter(([key]) => String(key).indexOf('file:') !== 0 || String(key).indexOf(ownTail) === 0)
             .sort((a, b) => Number(b[1].at === undefined ? 0 : b[1].at) - Number(a[1].at === undefined ? 0 : a[1].at))
           /* 正在翻历史版就完全不插手（「选中的那份没了就回最新」由另一个 effect 负责，
@@ -6668,24 +6692,14 @@ window.__ModuleLoader__.load({
         if (Math.abs(body.scrollTop - target) <= 2) return
         body.scrollTop = target
       }, [docSig])
-      /* 老数据没有 sid：在这个会话里第一次显示时认领给它，别处就不再串这份文档。 */
+      /* 没有 sid 的文档不再“认领给当前会话”——那正是串会话的来源（2026-11-27）。直接放下。 */
       React.useEffect(() => {
         if (!open || sessionId === null || sessionId === '') return
         const current = state.doc
         if (current === null || current === undefined) return
         if (typeof current.sid === 'string' && current.sid !== '') return
-        const key = typeof current.key === 'string' ? current.key : ''
-        const library = state.docLibrary === undefined || state.docLibrary === null ? {} : state.docLibrary
-        const entry = key === '' ? undefined : library[key]
-        const nextLibrary = entry !== undefined
-          && (typeof entry.sid !== 'string' || entry.sid === '')
-          ? { ...library, [key]: { ...entry, sid: sessionId } }
-          : null
-        commit({
-          doc: { ...current, sid: sessionId },
-          ...(nextLibrary === null ? {} : { docLibrary: nextLibrary }),
-        }, true)
-      }, [open, sessionId, store.doc, store.docLibrary])
+        commit({ doc: null }, true)
+      }, [open, sessionId, store.doc])
 
       React.useEffect(() => {
         if (!open) return undefined
