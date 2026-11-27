@@ -1,6 +1,6 @@
 {
   "name": "dsh-annotate",
-  "version": "0.112.9",
+  "version": "0.113.0",
   "private": true,
   "license": "MIT",
   "keywords": ["dsh", "dsh-plugin", "annotate", "annotation", "document", "markdown", "review"],

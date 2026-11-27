@@ -25,8 +25,7 @@ window.__ModuleLoader__.load({
 .dsha-ico{font-size:13px;line-height:1}
 .dsha-surface{position:relative;display:flex;flex-direction:column;gap:10px;width:360px;max-width:min(80vw,460px);
   padding:12px;border-radius:14px;
-  background:color-mix(in srgb,var(--dsw-alias-bg-layer-1) 96%,transparent);
-  backdrop-filter:blur(14px);
+  background:color-mix(in srgb,var(--dsw-alias-bg-layer-1) 97%,transparent);
   border:1px solid var(--dsw-alias-border-l1);
   box-shadow:0 18px 44px rgba(0,0,0,.42);
   color:var(--dsw-alias-label-primary);font-size:12.5px;font-family:inherit}
@@ -96,8 +95,7 @@ window.__ModuleLoader__.load({
   display:flex;flex-direction:column;overflow:hidden;pointer-events:auto;
   min-width:280px;min-height:200px;flex:0 0 auto;margin:0;box-sizing:border-box;
   border-radius:14px;border:1px solid var(--dsw-alias-border-l2);
-  background:color-mix(in srgb,var(--dsw-alias-bg-layer-1) 94%,transparent);
-  backdrop-filter:blur(14px) saturate(1.1);
+  background:color-mix(in srgb,var(--dsw-alias-bg-layer-1) 97%,transparent);
   box-shadow:0 20px 52px rgba(0,0,0,.46),0 0 0 .5px rgba(255,255,255,.05) inset}
 .dsha-head{height:42px;padding:0 8px 0 13px;gap:8px;flex:none;cursor:move;user-select:none;
   border-bottom:1px solid var(--dsw-alias-border-l1);
@@ -384,8 +382,7 @@ window.__ModuleLoader__.load({
 /* 选中即刻弹出的工具条 */
 .dsha-toolbar{position:fixed;z-index:90;display:flex;align-items:center;gap:2px;padding:4px;
   border-radius:10px;pointer-events:auto;
-  background:color-mix(in srgb,var(--dsw-alias-bg-layer-1) 96%,transparent);
-  backdrop-filter:blur(12px);border:1px solid var(--dsw-alias-border-l2);
+  background:color-mix(in srgb,var(--dsw-alias-bg-layer-1) 97%,transparent);border:1px solid var(--dsw-alias-border-l2);
   box-shadow:0 10px 26px rgba(0,0,0,.42)}
 .dsha-tb{height:26px;padding:0 9px;border:none;border-radius:6px;background:transparent;
   color:var(--dsw-alias-label-secondary);font-size:12px;cursor:pointer;font-family:inherit}
@@ -399,8 +396,7 @@ window.__ModuleLoader__.load({
 /* 划句即刻弹出的表情条：点一下就把这个表情的含义连同选中的句子发给我 */
 .dsha-emoji{position:fixed;z-index:91;display:flex;align-items:center;gap:1px;padding:3px 4px;
   border-radius:10px;pointer-events:auto;
-  background:color-mix(in srgb,var(--dsw-alias-bg-layer-1) 96%,transparent);
-  backdrop-filter:blur(12px);border:1px solid var(--dsw-alias-border-l2);
+  background:color-mix(in srgb,var(--dsw-alias-bg-layer-1) 97%,transparent);border:1px solid var(--dsw-alias-border-l2);
   box-shadow:0 10px 26px rgba(0,0,0,.42)}
 .dsha-emoji-btn{width:30px;height:28px;padding:0;border:none;border-radius:7px;background:transparent;
   font-size:17px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;
@@ -420,8 +416,7 @@ window.__ModuleLoader__.load({
    表情多到比卡片还宽时，表情那一段横向滚动 —— 滚轮也能拨（见 AnnotateSurface 里的 wheel 监听）。 */
 .dsha-say-pill{position:absolute;left:0;bottom:calc(100% + 4px);display:flex;align-items:center;gap:2px;
   max-width:100%;height:40px;padding:0 6px;box-sizing:border-box;border-radius:13px;overflow:hidden;
-  background:color-mix(in srgb,var(--dsw-alias-bg-layer-1) 97%,transparent);
-  backdrop-filter:blur(12px);border:1px solid var(--dsw-alias-border-l2);
+  background:color-mix(in srgb,var(--dsw-alias-bg-layer-1) 97%,transparent);border:1px solid var(--dsw-alias-border-l2);
   box-shadow:0 8px 22px rgba(0,0,0,.38)}
 .dsha-say-scroll{display:flex;align-items:center;gap:4px;flex:1;min-width:0;overflow-x:auto;overflow-y:hidden;
   scrollbar-width:none}
@@ -456,8 +451,7 @@ window.__ModuleLoader__.load({
 /* 文档里的批注线程卡：像聊天，但只在右栏 */
 .dsha-thread{position:fixed;z-index:95;width:340px;max-height:calc(100vh - 64px);display:flex;flex-direction:column;
   gap:8px;padding:10px;border-radius:12px;pointer-events:auto;
-  background:color-mix(in srgb,var(--dsw-alias-bg-layer-1) 97%,transparent);
-  backdrop-filter:blur(14px);border:1px solid var(--dsw-alias-border-l2);
+  background:color-mix(in srgb,var(--dsw-alias-bg-layer-1) 97%,transparent);border:1px solid var(--dsw-alias-border-l2);
   box-shadow:0 16px 40px rgba(0,0,0,.46);font-size:12px}
 .dsha-thread-head{display:flex;align-items:center;gap:6px;flex:none;cursor:move;user-select:none}
 /* 右下角的缩放把手：两条斜线，和系统窗口的角标一个语感 */
@@ -536,6 +530,11 @@ window.__ModuleLoader__.load({
   border-top:1px solid var(--dsw-alias-border-l1)}
 .dsha-set-note{font-size:11.5px;color:var(--dsw-alias-label-secondary)}
 .dsha-set-ver{width:110px;text-align:center;font-family:ui-monospace,Consolas,monospace;font-size:11.5px}
+/* 0.113 · 拖动/拉伸/窗口缩放期间：阴影、过渡一律关掉，合成器只搬像素不重算（见设计书 7.4）。 */
+:root[data-dsha-dragging="1"] [class*="dsha-"],:root[data-dsha-resizing="1"] [class*="dsha-"]{
+  box-shadow:none!important;transition:none!important;animation:none!important}
+:root[data-dsha-dragging="1"]{cursor:grabbing}
+:root[data-dsha-dragging="1"] [class*="dsha-"]{user-select:none}
 `
 
     function installStyles() {
@@ -546,6 +545,176 @@ window.__ModuleLoader__.load({
       element.textContent = CSS
       document.head.appendChild(element)
       return () => { element.remove() }
+    }
+
+    /* ============ 0.113 · P0 性能：拖动合帧 / 缩放标记 / 测量 / 事件驱动扫描 ============ */
+
+    const raf = (fn) => (typeof window.requestAnimationFrame === 'function'
+      ? window.requestAnimationFrame(fn)
+      : window.setTimeout(fn, 16))
+    const cancelRaf = (id) => {
+      if (typeof window.cancelAnimationFrame === 'function') window.cancelAnimationFrame(id)
+      else if (typeof window.clearTimeout === 'function') window.clearTimeout(id)
+    }
+
+    /**
+     * 拖动/拉伸合帧：pointermove 只记「最后一次要做的提交」，一帧最多提交一次。
+     * 以前每个 pointermove 都 commit → 14 个订阅组件全量重渲染，60+ 次/秒。
+     */
+    function rafGeom() {
+      let pending = null
+      let frame = 0
+      const run = () => {
+        frame = 0
+        const job = pending
+        pending = null
+        if (job !== null) job()
+      }
+      return {
+        push(job) {
+          pending = job
+          if (frame === 0) frame = raf(run)
+        },
+        /** 松手时调用：把最后一帧立刻落下去。 */
+        flush() {
+          if (frame !== 0) { cancelRaf(frame); frame = 0 }
+          run()
+        },
+      }
+    }
+
+    /** 拖动/拉伸期间在根节点挂 data-dsha-dragging="1"（CSS 据此关阴影与过渡）。 */
+    function setDragging(on) {
+      try {
+        const root = document.documentElement
+        if (root === null || root === undefined) return
+        if (on) root.setAttribute('data-dsha-dragging', '1')
+        else root.removeAttribute('data-dsha-dragging')
+      } catch (error) { /* 忽略 */ }
+    }
+
+    /** 窗口缩放期间挂 data-dsha-resizing="1"，停 200ms 后摘掉。返回卸载函数。 */
+    function installResizeMarker() {
+      let timer
+      const onResize = () => {
+        try { document.documentElement.setAttribute('data-dsha-resizing', '1') } catch (error) { /* 忽略 */ }
+        if (timer !== undefined) window.clearTimeout(timer)
+        timer = window.setTimeout(() => {
+          timer = undefined
+          try { document.documentElement.removeAttribute('data-dsha-resizing') } catch (error) { /* 忽略 */ }
+        }, 200)
+      }
+      window.addEventListener('resize', onResize, { passive: true })
+      return () => {
+        window.removeEventListener('resize', onResize)
+        if (timer !== undefined) window.clearTimeout(timer)
+        try { document.documentElement.removeAttribute('data-dsha-resizing') } catch (error) { /* 忽略 */ }
+      }
+    }
+
+    /* ---- 测量（设计书 7.2）：只记次数与耗时，不记正文 ---- */
+    const perfNow = () => (typeof performance !== 'undefined' && typeof performance.now === 'function' ? performance.now() : Date.now())
+    function perfBlank() {
+      return { since: Date.now(), tick: { n: 0, sum: 0, max: 0 }, scan: { n: 0, sum: 0, max: 0 }, commit: 0, persist: 0, beat: 0, pre: 0, sid: '' }
+    }
+    const perf = { cur: perfBlank(), last: null }
+    function perfAdd(slot, ms) {
+      const bucket = perf.cur[slot]
+      bucket.n += 1
+      bucket.sum += ms
+      if (ms > bucket.max) bucket.max = ms
+    }
+    /** 一行性能日志（纯函数，方便测）。 */
+    function perfLine(snap, mode, tail) {
+      const avg = (b) => (b.n === 0 ? 0 : b.sum / b.n)
+      const f = (x) => (Math.round(x * 10) / 10).toFixed(1)
+      const secs = Math.max(1, (Number(snap.until || Date.now()) - snap.since) / 1000)
+      return '性能 [' + tail + '] tick 平均 ' + f(avg(snap.tick)) + 'ms/最大 ' + f(snap.tick.max) + 'ms/' + String(snap.tick.n) + ' 次'
+        + ' | scan 平均 ' + f(avg(snap.scan)) + 'ms/' + String(snap.scan.n) + ' 次/' + f(snap.scan.n / secs) + '每秒'
+        + ' | commit ' + String(snap.commit) + ' | persist ' + String(snap.persist)
+        + ' | pre 块 ' + String(snap.pre) + ' | 模式 ' + mode
+    }
+    /** 每 10 秒收一次账，写一行到 /annotate-log；什么都没发生就不写。 */
+    function perfFlush() {
+      const snap = perf.cur
+      snap.until = Date.now()
+      try { snap.pre = document.querySelectorAll('[data-chat-flow] pre').length } catch (error) { snap.pre = 0 }
+      perf.last = snap
+      perf.cur = perfBlank()
+      perf.cur.sid = snap.sid
+      if (snap.tick.n === 0 && snap.scan.n === 0 && snap.commit === 0) return
+      const text = perfLine(snap, scanMode(), sessionTail(snap.sid))
+      try {
+        fetch('/annotate-log', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ at: new Date().toISOString(), text }),
+        }).catch(() => {})
+      } catch (error) { /* 忽略 */ }
+    }
+
+    /* ---- 扫描调度（设计书 7.3） ---- */
+    const SCAN = { BEAT_MS: 100, MIN_GAP_MS: 250, IDLE_MS: 1600, STREAM_MS: 250, STREAM_HOLD_MS: 1500, POLL_MS: 300, DISK_MS: 4000 }
+    const scanState = { mode: 'event', dirty: true, streamingUntil: 0 }
+    function scanMode() { return scanState.mode }
+    /** 标脏：下一拍（≤100ms）就扫。why 只用于调试。 */
+    function markScanDirty(why) {
+      scanState.dirty = true
+      scanState.why = typeof why === 'string' ? why : ''
+    }
+
+    /**
+     * 这一拍要不要真扫（纯函数）。
+     * - poll：老行为，固定 300ms 一次（A/B 对照用）；
+     * - event：脏了（聊天 DOM 变了 / 切会话 / 开面板 / 窗口聚焦 / 文档变长 / 页签同步 / 磁盘该对账）且距上次 ≥ minGapMs；
+     *          流式期间每 250ms；其余时间每 idleMs 兜底一次。
+     */
+    function shouldScanNow(input) {
+      const o = input === null || input === undefined ? {} : input
+      const now = Number(o.now) || 0
+      const last = Number(o.lastScanAt) || 0
+      const gap = now - last
+      if (last === 0) return true
+      if (o.mode === 'poll') return gap >= SCAN.POLL_MS
+      const minGap = Number.isFinite(o.minGapMs) ? o.minGapMs : SCAN.MIN_GAP_MS
+      if (o.dirty === true && gap >= minGap) return true
+      if (Number(o.streamingUntil) > now && gap >= SCAN.STREAM_MS) return true
+      const idle = Number.isFinite(o.idleMs) ? o.idleMs : SCAN.IDLE_MS
+      return gap >= idle
+    }
+
+    /**
+     * 聊天流观察器（全插件一份）：DocPanel 的扫描和 ReplyBridge 的回执都订阅它。
+     * [data-chat-flow] 节点被宿主换掉（切会话）时自动重挂。
+     */
+    const chatWatch = { el: null, observer: null, listeners: new Set() }
+    function ensureChatWatch() {
+      let flow = null
+      try { flow = document.querySelector('[data-chat-flow]') } catch (error) { flow = null }
+      if (flow === chatWatch.el) return
+      if (chatWatch.observer !== null) {
+        try { chatWatch.observer.disconnect() } catch (error) { /* 忽略 */ }
+        chatWatch.observer = null
+      }
+      chatWatch.el = flow
+      markScanDirty('flow-swap')
+      if (flow === null || typeof MutationObserver !== 'function') return
+      try {
+        chatWatch.observer = new MutationObserver(() => {
+          markScanDirty('mutation')
+          for (const fn of [...chatWatch.listeners]) {
+            try { fn() } catch (error) { /* 忽略 */ }
+          }
+        })
+        chatWatch.observer.observe(flow, { childList: true, subtree: true, characterData: true })
+      } catch (error) {
+        chatWatch.observer = null
+      }
+    }
+    function onChatMutation(fn) {
+      chatWatch.listeners.add(fn)
+      ensureChatWatch()
+      return () => { chatWatch.listeners.delete(fn) }
     }
 
     /* ------------------------------------------------------------- 状态与存储 */
@@ -947,9 +1116,28 @@ window.__ModuleLoader__.load({
       return base
     }
 
+    /* 0.113 · 落盘减重（设计书 7.5）：旧 docLibrary（≈56 KB）只序列化一次，之后每次 persist 直接拼接缓存串。
+       不能干脆不写：0.111.x 只从 'dsh-annotate/v1' 的 docLibrary 字段读库，省掉它回滚就读不到了。 */
+    const legacyCache = { src: undefined, json: '' }
+    function legacyJsonOf(legacy) {
+      if (legacy === null || legacy === undefined) return ''
+      if (legacyCache.src !== legacy) {
+        legacyCache.src = legacy
+        legacyCache.json = JSON.stringify(legacy)
+      }
+      return legacyCache.json
+    }
+    /** 把旧库缓存串拼进主 JSON（纯函数）：结果与 JSON.stringify({...body, docLibrary}) 等价。 */
+    function spliceLegacy(bodyJson, legacyJson) {
+      if (typeof legacyJson !== 'string' || legacyJson === '') return bodyJson
+      if (bodyJson === '{}') return '{"docLibrary":' + legacyJson + '}'
+      return bodyJson.slice(0, -1) + ',"docLibrary":' + legacyJson + '}'
+    }
+
     function persist() {
+      perf.cur.persist += 1
       try {
-        window.localStorage.setItem(STORAGE_KEY, JSON.stringify({
+        window.localStorage.setItem(STORAGE_KEY, spliceLegacy(JSON.stringify({
           schema: SCHEMA,
           batchSeq: state.batchSeq,
           sessions: state.sessions,
@@ -961,8 +1149,7 @@ window.__ModuleLoader__.load({
           docs: state.docs,
           docDemote: state.docDemote === true,
           docDemoted: typeof state.docDemoted === 'number' ? state.docDemoted : 0,
-          /* 旧的全局库：只为回滚保留，原样写回、不再更新（0.113 起删除）。 */
-          ...(state.docLibraryLegacy !== null && state.docLibraryLegacy !== undefined ? { docLibrary: state.docLibraryLegacy } : {}),
+          /* 旧的全局库 docLibrary：不在这里序列化，见 spliceLegacy（0.113）。 */
           docWideBox: state.docWideBox,
           docFloatBox: state.docFloatBox,
           docThreadBox: state.docThreadBox,
@@ -975,7 +1162,7 @@ window.__ModuleLoader__.load({
           onlyLost: state.onlyLost === true,
           sentTails: state.sentTails,
           sentTail: state.sentTail,
-        }))
+        }), legacyJsonOf(state.docLibraryLegacy)))
       } catch (error) {
         console.warn('[annotate] 本地存储写不进去', error)
       }
@@ -1013,7 +1200,7 @@ window.__ModuleLoader__.load({
     }
 
     function commit(patch, shouldPersist) {
-
+      perf.cur.commit += 1
       state = { ...state, ...patch }
       if (shouldPersist === true) persist()
       notify()
@@ -1093,6 +1280,12 @@ window.__ModuleLoader__.load({
       const why = runtime.docWhy === undefined || runtime.docWhy === '' ? 'unknown' : runtime.docWhy
       runtime.docWhy = ''
       logDocSwitch(why, next)
+      {
+        /* 文档变长（流式续写 / 采纳）：标脏，下一拍就再扫一次，跟上生成（7.3）。 */
+        const before = state.doc !== null && state.doc !== undefined && Array.isArray(state.doc.blocks) ? state.doc.blocks.length : 0
+        const after = next !== null && next !== undefined && Array.isArray(next.blocks) ? next.blocks.length : 0
+        if (after > before) markScanDirty('grow')
+      }
       commit(extra === undefined ? { doc: next } : { ...extra, doc: next })
       schedulePersist()
       scheduleDocFile(next)
@@ -3292,25 +3485,30 @@ window.__ModuleLoader__.load({
           && event.target.closest('button, input, textarea, select, [contenteditable="true"]') !== null) return
         event.preventDefault()
         const base = { mx: event.clientX, my: event.clientY, x: geo.x, y: geo.y }
+        /* 0.113：一帧最多提交一次几何（7.4）。 */
+        const frame = rafGeom()
+        setDragging(true)
         const move = (moving) => {
           /* 在窗口外松手时 pointerup 收不到，靠按键状态兜底解绑。 */
           if (moving.buttons === 0) {
             up()
             return
           }
-          commit({
+          frame.push(() => commit({
             ui: {
               ...geo,
               x: Math.max(0, Math.min(base.x + (moving.clientX - base.mx), Math.max(0, window.innerWidth - geo.w))),
               /* 顶到窗口最上面时标题栏会被 DSH 自己的标题条抢走，所以留一条拖动余量。 */
               y: Math.max(MIN_TOP, Math.min(base.y + (moving.clientY - base.my), Math.max(MIN_TOP, window.innerHeight - geo.h))),
             },
-          })
+          }))
         }
         const up = () => {
           window.removeEventListener('pointermove', move)
           window.removeEventListener('pointerup', up)
           window.removeEventListener('pointercancel', up)
+          frame.flush()
+          setDragging(false)
           persist()
         }
         window.addEventListener('pointermove', move)
@@ -3323,6 +3521,8 @@ window.__ModuleLoader__.load({
         event.preventDefault()
         event.stopPropagation()
         const base = { mx: event.clientX, my: event.clientY, x: geo.x, y: geo.y, w: geo.w, h: geo.h }
+        const frame = rafGeom()
+        setDragging(true)
         const move = (moving) => {
           /* 同上：窗口外松手也要能解绑。 */
           if (moving.buttons === 0) {
@@ -3348,15 +3548,19 @@ window.__ModuleLoader__.load({
             h = Math.max(MIN_H, Math.min(base.h - dy, base.y + base.h - MIN_TOP))
             y = base.y + base.h - h
           }
-          commit({ ui: { x, y, w, h } })
+          frame.push(() => commit({ ui: { x, y, w, h } }))
         }
         const up = () => {
           window.removeEventListener('pointermove', move)
           window.removeEventListener('pointerup', up)
+          window.removeEventListener('pointercancel', up)
+          frame.flush()
+          setDragging(false)
           persist()
         }
         window.addEventListener('pointermove', move)
         window.addEventListener('pointerup', up)
+        window.addEventListener('pointercancel', up)
       }
       const list = itemsOf(sessionId)
       const pending = list.filter(entry => entry.status === 'queued')
@@ -4686,10 +4890,19 @@ window.__ModuleLoader__.load({
 
     const DOC_PATH = '对话文档'
     /* 文档栏上会显示它：一眼看出跑的是不是刚改的那份客户端。 */
-    const PLUGIN_VERSION = '0.112.9'
+    const PLUGIN_VERSION = '0.113.0'
 
     /** 在聊天流里找最新一份 ```dsh-doc 围栏（助手输出的文档）。 */
+    /** 测量包一层（7.2）：真实实现在 scanDocBlocksRaw。 */
     function scanDocBlocks() {
+      const t0 = perfNow()
+      try {
+        return scanDocBlocksRaw()
+      } finally {
+        perfAdd('scan', perfNow() - t0)
+      }
+    }
+    function scanDocBlocksRaw() {
       try {
         const flow = document.querySelector('[data-chat-flow]')
         if (flow === null) return { found: null, foundKey: '', mode: 'full', list: [], classes: [], probe: '聊天流没找到' }
@@ -5803,16 +6016,23 @@ window.__ModuleLoader__.load({
       const writeBackAtRef = React.useRef(0)
       const [wbConfirm, setWbConfirm] = React.useState('')
       React.useEffect(() => {
+        /* 0.113：线程卡的拖动/缩放也按帧合并（7.4）。 */
+        const frame = rafGeom()
         const onMove = (event) => {
           const info = dragRef.current
           const current = state.docThread
           if (info === null || current === null || current === undefined) return
           /* 在窗口外松手收不到 pointerup：按“键已经松开”就地解绑，别让卡片粘着鼠标。 */
-          if (event.buttons === 0) { dragRef.current = null; return }
+          if (event.buttons === 0) { dragRef.current = null; frame.flush(); setDragging(false); return }
+          setDragging(true)
           if (info.mode === 'move') {
             const x = Math.max(8, Math.min(Math.round(event.clientX - info.dx), window.innerWidth - info.w - 8))
             const y = Math.max(42, Math.min(Math.round(event.clientY - info.dy), window.innerHeight - info.h - 8))
-            commit({ docThread: { ...current, x, y } })
+            frame.push(() => {
+              const live = state.docThread
+              if (live === null || live === undefined) return
+              commit({ docThread: { ...live, x, y } })
+            })
             return
           }
           /* 八向缩放：东/南改宽高，西/北同时改 x/y 并把宽高反向补偿。 */
@@ -5827,11 +6047,17 @@ window.__ModuleLoader__.load({
               minY: 42,
             },
           )
-          commit({ docThread: { ...current, x: next.x, y: next.y, w: next.w, h: next.h } })
+          frame.push(() => {
+            const live = state.docThread
+            if (live === null || live === undefined) return
+            commit({ docThread: { ...live, x: next.x, y: next.y, w: next.w, h: next.h } })
+          })
         }
         const onUp = () => {
           const info = dragRef.current
           dragRef.current = null
+          frame.flush()
+          if (info !== null) setDragging(false)
           /* 只记尺寸，而且只从「对话过的卡片」上记：没对话过的卡片不覆盖你的偏好。 */
           if (info === null || info.mode !== 'resize' || talkRef.current !== true) return
           const geo = state.docThread
@@ -6312,17 +6538,10 @@ window.__ModuleLoader__.load({
         if (sessionId === null) return undefined
         let dirty = true
         const markDirty = () => { dirty = true }
-        let observer = null
-        try {
-          const flow = document.querySelector('[data-chat-flow]')
-          if (flow !== null) {
-            observer = new MutationObserver(markDirty)
-            observer.observe(flow, { childList: true, subtree: true, characterData: true })
-          }
-        } catch (error) {
-          observer = null
-        }
+        /* 0.113：和文档扫描共用一个聊天流观察器（chatWatch），宿主换掉 [data-chat-flow] 时会自动重挂。 */
+        const offChat = onChatMutation(markDirty)
         const tick = () => {
+          ensureChatWatch()
           runtime.lastSid = sessionId
           /* 折叠不依赖脏标记：React 重渲染会把属性冲掉，干脆每拍都补一次。 */
           try {
@@ -6364,7 +6583,7 @@ window.__ModuleLoader__.load({
           window.clearInterval(timer)
           window.clearInterval(heartbeat)
           document.removeEventListener('click', onClick, true)
-          if (observer !== null) observer.disconnect()
+          offChat()
         }
       }, [sessionId])
       return null
@@ -6751,18 +6970,22 @@ window.__ModuleLoader__.load({
         event.preventDefault()
         event.stopPropagation()
         const start = { mx: event.clientX, my: event.clientY, box: docBox }
+        const frame = rafGeom()
+        setDragging(true)
         const move = (moving) => {
           if (moving.buttons === 0) { up(); return }
-          saveBox({
+          frame.push(() => saveBox({
             ...start.box,
             x: Math.max(-60, Math.min(start.box.x + (moving.clientX - start.mx), Math.max(0, window.innerWidth - start.box.w - 8))),
             y: Math.max(48, Math.min(start.box.y + (moving.clientY - start.my), Math.max(48, window.innerHeight - 80))),
-          })
+          }))
         }
         const up = () => {
           window.removeEventListener('pointermove', move)
           window.removeEventListener('pointerup', up)
           window.removeEventListener('pointercancel', up)
+          frame.flush()
+          setDragging(false)
           persist()
         }
         window.addEventListener('pointermove', move)
@@ -6775,6 +6998,8 @@ window.__ModuleLoader__.load({
         event.preventDefault()
         event.stopPropagation()
         const start = { mx: event.clientX, my: event.clientY, box: docBox }
+        const frame = rafGeom()
+        setDragging(true)
         const move = (moving) => {
           if (moving.buttons === 0) { up(); return }
           const dx = moving.clientX - start.mx
@@ -6793,12 +7018,14 @@ window.__ModuleLoader__.load({
             h = Math.max(260, start.box.h - dy)
             y = Math.max(48, start.box.y + (start.box.h - h))
           }
-          saveBox({ x, y, w, h })
+          frame.push(() => saveBox({ x, y, w, h }))
         }
         const up = () => {
           window.removeEventListener('pointermove', move)
           window.removeEventListener('pointerup', up)
           window.removeEventListener('pointercancel', up)
+          frame.flush()
+          setDragging(false)
           persist()
         }
         window.addEventListener('pointermove', move)
@@ -6812,15 +7039,20 @@ window.__ModuleLoader__.load({
         event.preventDefault()
         event.stopPropagation()
         const start = { mx: event.clientX, w: drawerW }
+        const frame = rafGeom()
+        setDragging(true)
         const move = (moving) => {
           if (moving.buttons === 0) { up(); return }
           const max = Math.min(760, Math.round(window.innerWidth * 0.7))
-          commit({ docDrawerW: Math.max(260, Math.min(start.w + (start.mx - moving.clientX), max)) })
+          const next = Math.max(260, Math.min(start.w + (start.mx - moving.clientX), max))
+          frame.push(() => commit({ docDrawerW: next }))
         }
         const up = () => {
           window.removeEventListener('pointermove', move)
           window.removeEventListener('pointerup', up)
           window.removeEventListener('pointercancel', up)
+          frame.flush()
+          setDragging(false)
           persist()
         }
         window.addEventListener('pointermove', move)
@@ -6877,9 +7109,18 @@ window.__ModuleLoader__.load({
         let alive = true
         /* 这个 effect 按 [open, sessionId] 重建：startedAt 就是「切进这个会话」的时刻。 */
         const startedAt = Date.now()
+        /* 流式判定（7.3）：上一拍扫到的正文；变了就认为还在生成，接下来 1.5s 内按 250ms 扫。 */
+        let lastFoundText = ''
         const load = () => {
           const scan = scanDocBlocks()
           if (!alive) return
+          {
+            const foundNow = typeof scan.found === 'string' ? scan.found : ''
+            if (foundNow !== lastFoundText) {
+              lastFoundText = foundNow
+              if (foundNow !== '') scanState.streamingUntil = Date.now() + SCAN.STREAM_HOLD_MS
+            }
+          }
           /* 这三个值只在「空状态」那一屏才会被渲染。正文有了还每拍 setState，
              等于每拍整面板重渲染一次（生成期间正好每拍命中），纯浪费。 */
           const docNow = state.doc
@@ -7104,12 +7345,53 @@ window.__ModuleLoader__.load({
           if (state.doc === null || state.doc === undefined) restoreDocFromFile(sessionId)
           else refreshDocFile(sessionId)
         }
-        tick()
-        /* 300ms：文档是边生成边长出来的，轮询要跟得上。 */
-        const timer = window.setInterval(tick, 300)
+        /* 0.113 · 事件驱动（设计书 7.3）：100ms 一拍只做一次廉价判断，真扫（tick）由 shouldScanNow 决定。
+           以前固定 300ms 整套跑一遍（扫 DOM + 合库 + 对磁盘），空闲时也一样（基线约 3.3 次/秒）。 */
+        const runTick = () => {
+          const t0 = perfNow()
+          try {
+            tick()
+          } finally {
+            perfAdd('tick', perfNow() - t0)
+          }
+        }
+        let lastScanAt = 0
+        const beat = () => {
+          if (!alive) return
+          perf.cur.beat += 1
+          perf.cur.sid = sessionId
+          ensureChatWatch()
+          const now = Date.now()
+          /* 工具写盘的新文件靠 /annotate-doc/list 对账（坑 #6）：到 4 秒就算脏，保证 4 秒内出现。 */
+          const diskAt = runtime.diskSyncAt[sessionId]
+          const diskDue = diskAt === undefined || now - diskAt >= SCAN.DISK_MS
+          const go = shouldScanNow({
+            mode: scanState.mode,
+            dirty: scanState.dirty === true || diskDue,
+            now,
+            lastScanAt,
+            idleMs: SCAN.IDLE_MS,
+            streamingUntil: scanState.streamingUntil,
+            minGapMs: SCAN.MIN_GAP_MS,
+          })
+          if (go !== true) return
+          scanState.dirty = false
+          lastScanAt = now
+          runTick()
+        }
+        /* 切会话 / 打开面板：effect 重建，立刻扫一次。 */
+        perf.cur.sid = sessionId
+        ensureChatWatch()
+        scanState.dirty = false
+        lastScanAt = Date.now()
+        runTick()
+        const timer = window.setInterval(beat, SCAN.BEAT_MS)
+        const onFocus = () => markScanDirty('focus')
+        window.addEventListener('focus', onFocus)
         return () => {
           alive = false
           window.clearInterval(timer)
+          window.removeEventListener('focus', onFocus)
         }
         /* 依赖里必须有 sessionId：文档页签是常驻的（embedded = open 恒 true），
            少了它切会话后这个 effect 永远不重建，之后每拍都用旧会话 id 写 docLibrary / doc.sid。 */
@@ -8780,6 +9062,7 @@ window.__ModuleLoader__.load({
         sanitizeSvg, svgSizeOf, svgLabelOf, safeFileName, parseMarkdownDoc, docToMarkdown,
         shouldTakeFile, shouldAdopt, chatDocAction, annotationsToMarkdown, annotationsToCsv, typeIconOf, quoteInDocBlocks, docStampOf, anchorSpanFor, planWriteBack, asBlockquote, shouldReloadFile, shouldWriteDoc, tableRowsOf, splitTableRow, isTableDivider,
         encodeWav, resizeBox,
+        shouldScanNow, perfLine, perfBlank, spliceLegacy, rafGeom, scanTuning: SCAN,
         migrateDocLibrary, sanitizeDocs, keyFitsSession, fileKeyTail, docBelongsTo, trimBucket, trimDocs, docDiagLines, sidBrief,
         libOf: (sid) => libOf(sid),
         stateOf: () => state,
@@ -8788,6 +9071,38 @@ window.__ModuleLoader__.load({
         runtime.ctx = ctx
 
         ctx.effect(() => installStyles(), 'annotate: styles')
+        /* 0.113 · 窗口缩放期间挂 data-dsha-resizing（7.4）。 */
+        ctx.effect(() => installResizeMarker(), 'annotate: 缩放标记')
+        /* 0.113 · 性能账（7.2）：每 10 秒一行写进 /annotate-log；附只读调试口与扫描模式开关（7.3 A/B）。 */
+        ctx.effect(() => {
+          const timer = window.setInterval(perfFlush, 10000)
+          window.__dshaPerf = () => {
+            const cur = perf.cur
+            return {
+              mode: scanMode(),
+              current: JSON.parse(JSON.stringify(cur)),
+              last: perf.last === null ? null : JSON.parse(JSON.stringify(perf.last)),
+              lastLine: perf.last === null ? '' : perfLine(perf.last, scanMode(), sessionTail(perf.last.sid)),
+            }
+          }
+          window.__dshaScanMode = (mode) => {
+            if (mode === 'poll' || mode === 'event') {
+              scanState.mode = mode
+              markScanDirty('mode')
+            }
+            return scanState.mode
+          }
+          return () => {
+            window.clearInterval(timer)
+            try { delete window.__dshaPerf } catch (error) { window.__dshaPerf = undefined }
+            try { delete window.__dshaScanMode } catch (error) { window.__dshaScanMode = undefined }
+            if (chatWatch.observer !== null) {
+              try { chatWatch.observer.disconnect() } catch (error) { /* 忽略 */ }
+              chatWatch.observer = null
+              chatWatch.el = null
+            }
+          }
+        }, 'annotate: 性能账')
 
         try {
           ctx.effect(() => ctx.uiConversation.interactions.register({
@@ -8932,6 +9247,8 @@ window.__ModuleLoader__.load({
               }
             }
             runtime.dockOn = want
+            /* 页签刚挂上/摘下：让文档面板下一拍就扫（7.3）。 */
+            markScanDirty('dock')
           }
           sync()
           const timer = window.setInterval(sync, 1000)
