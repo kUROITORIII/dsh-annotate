@@ -1281,6 +1281,11 @@ window.__ModuleLoader__.load({
          分两次写会出现「先换文档再清 pick」的中间态，面板闪一下。 */
       const why = runtime.docWhy === undefined || runtime.docWhy === '' ? 'unknown' : runtime.docWhy
       runtime.docWhy = ''
+      /* 0.113.3 诊断：谁把当前文档换成了什么。只记键与标题，不记正文。 */
+      try {
+        const prevKey = state.doc !== null && state.doc !== undefined && typeof state.doc.key === 'string' ? state.doc.key : '-'
+        logLine('换文档 why=' + why + ' 新=' + String(next.key || '-') + ' (' + String(next.title || '-') + ') 旧=' + prevKey)
+      } catch (error) { /* 忽略 */ }
       logDocSwitch(why, next)
       {
         /* 文档变长（流式续写 / 采纳）：标脏，下一拍就再扫一次，跟上生成（7.3）。 */
@@ -2708,7 +2713,7 @@ window.__ModuleLoader__.load({
     /** 根作用域的侧栏拿不到 inputActions，由会话作用域的按钮把它挂过来。
      *  `target` 是文件选区的唯一接缝：谁采到「文件 + 行号 + 原文」谁就往这里写，
      *  AnnotateSurface 消费后立刻清空，绝不跨批次残留。 */
-    const runtime = { actions: null, target: null, targetAt: 0, trace: '', ctx: null, replyScan: { refs: [], total: 0 }, replySeen: {}, lostCache: new Map(), autoOpen: {}, settingsForm: null, dockDispose: null, dockOn: null, docPurged: {}, diskSyncAt: {}, diskKnown: {}, chatBaseline: {} }
+    const runtime = { actions: null, target: null, targetAt: 0, trace: '', ctx: null, replyScan: { refs: [], total: 0 }, replySeen: {}, lostCache: new Map(), autoOpen: {}, settingsForm: null, dockDispose: null, dockOn: null, docPurged: {}, diskSyncAt: {}, diskKnown: {}, chatBaseline: {}, settleLogged: {} }
 
     function freshTarget() {
       if (runtime.target === null) return null
@@ -4917,7 +4922,7 @@ window.__ModuleLoader__.load({
 
     const DOC_PATH = '对话文档'
     /* 文档栏上会显示它：一眼看出跑的是不是刚改的那份客户端。 */
-    const PLUGIN_VERSION = '0.113.2'
+    const PLUGIN_VERSION = '0.113.3'
 
     /** 在聊天流里找最新一份 ```dsh-doc 围栏（助手输出的文档）。 */
     /** 测量包一层（7.2）：真实实现在 scanDocBlocksRaw。 */
@@ -7384,6 +7389,15 @@ window.__ModuleLoader__.load({
           /* 聊天里扫不到、库里也没有 → 最后才试磁盘上的文件（方案 B′）。 */
           if (state.doc === null || state.doc === undefined) restoreDocFromFile(sessionId)
           else refreshDocFile(sessionId)
+        }
+        if (runtime.settleLogged[sessionId] !== true) {
+          runtime.settleLogged[sessionId] = true
+          const cur = state.doc
+          const list = dedupeDocList(Object.entries(libOf(sessionId))
+            .map(([key, value]) => ({ key, title: value.title, at: value.at, sid: value.sid, trusted: value.trusted }))
+            .filter(entry => entry.sid === sessionId && entry.trusted !== false)
+            .sort((a, b) => b.at - a.at))
+          logLine('落定 [' + sessionTail(sessionId) + '] doc=' + (cur === null || cur === undefined ? '(空)' : String(cur.key || '') + ' (' + String(cur.title || '') + ')') + ' pick=' + String(state.docPick || '-') + ' 列表首=' + (list.length === 0 ? '-' : String(list[0].key || '')))
         }
         /* 0.113 · 事件驱动（设计书 7.3）：100ms 一拍只做一次廉价判断，真扫（tick）由 shouldScanNow 决定。
            以前固定 300ms 整套跑一遍（扫 DOM + 合库 + 对磁盘），空闲时也一样（基线约 3.3 次/秒）。 */
