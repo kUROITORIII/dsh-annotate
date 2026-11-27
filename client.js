@@ -4962,7 +4962,7 @@ window.__ModuleLoader__.load({
 
     const DOC_PATH = '对话文档'
     /* 文档栏上会显示它：一眼看出跑的是不是刚改的那份客户端。 */
-    const PLUGIN_VERSION = '0.113.4'
+    const PLUGIN_VERSION = '0.113.5'
 
     /** 在聊天流里找最新一份 ```dsh-doc 围栏（助手输出的文档）。 */
     /** 测量包一层（7.2）：真实实现在 scanDocBlocksRaw。 */
@@ -8399,7 +8399,10 @@ window.__ModuleLoader__.load({
               className: navOpen ? 'dsha-mini dsha-mini-on' : 'dsha-mini',
               title: '这个对话里的所有文档',
               onClick: () => setNavOpen(value => !value),
-            }, String(docs.length) + ' 份 ▾'),
+            /* 0.113.5 临时诊断：把「这份面板认为的当前文档键」直接显示出来，
+               用来确认屏幕和 state.doc 是不是同一份。定位后删掉。 */
+            }, String(docs.length) + ' 份 · ' + String(sessionId === null || sessionId === undefined ? '无会话' : sessionTail(sessionId))
+              + ' · doc=' + (doc === null || doc === undefined ? '空' : String(doc.key === undefined ? '' : doc.key).slice(-16)) + ' ▾'),
             /* 左侧那个「✎ 批注」按钮在聊天标题栏，常被别的层盖住点不动；
                这里再给一个入口，位置在文档栏，肯定点得到。 */
             h('button', {
