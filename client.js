@@ -1473,6 +1473,12 @@ window.__ModuleLoader__.load({
         if (after > before) markScanDirty('grow')
       }
       commit(extra === undefined ? { doc: next } : { ...extra, doc: next })
+      /* 0.121.2：每个会话各自的当前文档。两个会话的文档面板同时开着时，
+         全局 state.doc 会被互相覆盖（互相判「不是我的」→ 各自清空 → 每秒换几次），
+         这里按 sid 各存一份，面板优先读自己那份。 */
+      if (next !== null && next !== undefined && typeof next.sid === 'string' && next.sid !== '') {
+        runtime.docBySid[next.sid] = next
+      }
       schedulePersist()
       scheduleDocFile(next)
     }
@@ -3207,7 +3213,7 @@ window.__ModuleLoader__.load({
     /** 根作用域的侧栏拿不到 inputActions，由会话作用域的按钮把它挂过来。
      *  `target` 是文件选区的唯一接缝：谁采到「文件 + 行号 + 原文」谁就往这里写，
      *  AnnotateSurface 消费后立刻清空，绝不跨批次残留。 */
-    const runtime = { actions: null, target: null, targetAt: 0, trace: '', ctx: null, replyScan: { refs: [], total: 0 }, replySeen: {}, lostCache: new Map(), autoOpen: {}, settingsForm: null, dockDispose: null, dockOn: null, docPurged: {}, diskSyncAt: {}, diskKnown: {}, chatBaseline: {}, settleLogged: {} }
+    const runtime = { actions: null, target: null, targetAt: 0, trace: '', ctx: null, replyScan: { refs: [], total: 0 }, replySeen: {}, lostCache: new Map(), autoOpen: {}, settingsForm: null, dockDispose: null, dockOn: null, docPurged: {}, diskSyncAt: {}, diskKnown: {}, chatBaseline: {}, settleLogged: {}, docBySid: {} }
 
     function freshTarget() {
       if (runtime.target === null) return null
@@ -5427,7 +5433,7 @@ window.__ModuleLoader__.load({
 
     const DOC_PATH = '对话文档'
     /* 文档栏上会显示它：一眼看出跑的是不是刚改的那份客户端。 */
-    const PLUGIN_VERSION = '0.121.1'
+    const PLUGIN_VERSION = '0.121.2'
 
     /** 在聊天流里找最新一份 ```dsh-doc 围栏（助手输出的文档）。 */
     /** 测量包一层（7.2）：真实实现在 scanDocBlocksRaw。 */
@@ -7929,9 +7935,11 @@ window.__ModuleLoader__.load({
       const docKeyMine = docBelongsTo(store.doc, sessionId)
       void docKeyRaw
       void docSession
-      const docStored = store.doc !== null && store.doc !== undefined && docKeyMine
+      /* 0.121.2：全局 state.doc 属于别的会话时，退回「我这个会话自己的那份」。 */
+      const ownDoc = runtime.docBySid[sessionId] === undefined ? null : runtime.docBySid[sessionId]
+      const docStored = docKeyMine
         ? store.doc
-        : null
+        : (ownDoc !== null && docBelongsTo(ownDoc, sessionId) ? ownDoc : null)
       const editing = store.docEditing === true && (store.docPick === '' || store.docPick === undefined)
       const fontSize = typeof store.docFont === 'number' ? store.docFont : 15
       const pick = typeof store.docPick === 'string' ? store.docPick : ''
@@ -8425,6 +8433,8 @@ window.__ModuleLoader__.load({
              （2026-11-27 日志实锤：677 次切换来源都是 library）。 */
           const currentDoc = state.doc
           if (currentDoc !== null && currentDoc !== undefined) {
+            /* 0.121.2：别的会话正占着全局文档，不要去抢（否则两个面板互相覆盖）。 */
+            if (typeof currentDoc.sid === 'string' && currentDoc.sid !== '' && currentDoc.sid !== sessionId) return
             if (currentDoc.sid === sessionId) return              /* 本会话已有文档：库不插手 */
             const currentKey = String(currentDoc.key === undefined ? '' : currentDoc.key)
             const mineKeys = new Set(mine.map(([k]) => k))
@@ -8467,7 +8477,11 @@ window.__ModuleLoader__.load({
           if (state.doc !== null && state.doc !== undefined) {
             /* 与渲染用同一个判据（docBelongsTo），不会出现「显示判 A、轮询判 B」。 */
             const mine = docBelongsTo(state.doc, sessionId)
-            if (!mine) commit({ doc: null, docPick: '', docView: null })
+            const other = state.doc !== null && typeof state.doc.sid === 'string' && state.doc.sid !== '' && state.doc.sid !== sessionId
+            /* 0.121.2：**别的会话的文档不在这里清空**。以前两个会话的面板同时开着时，
+               各自把对方的文档判成「不是我的」并清空，于是全局 state.doc 每秒被改几次（换文档日志刷屏）。
+               现在：属于别的会话就放着（那个面板自己用），只清「连 sid 都没有」的残留。 */
+            if (!mine && other !== true) commit({ doc: null, docPick: '', docView: null })
           }
           load()
           adoptFromLibrary()
