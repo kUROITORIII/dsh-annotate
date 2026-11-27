@@ -1485,7 +1485,8 @@ function registerDocTools(ctx, config) {
   ctx.inject(['tools'], (toolCtx) => {
     toolCtx.effect(() => toolCtx.tools.register({
       name: 'doc_read',
-      description: '读当前会话的对话文档（磁盘上那份 .md 的最新内容）。改文档前先调用它拿到原文，'
+      description: '读当前会话的对话文档（磁盘上那份 .md 的最新内容；也就是用户右侧面板里显示的那份）。'
+        + '改文档前先调用它拿到原文，'
         + '因为后续 doc_replace 的锚点必须和原文逐字一致。',
       parameters: docSchema({
         title: { type: 'string', description: '要读哪一份（文档标题）；省略＝该会话最新一份' },
@@ -1506,7 +1507,7 @@ function registerDocTools(ctx, config) {
 
     toolCtx.effect(() => toolCtx.tools.register({
       name: 'doc_replace',
-      description: '把对话文档里的一段原文替换成新文字，只发这一段、不用重发全文。'
+      description: '把对话文档（用户右侧面板里那份）的一段原文替换成新文字，只发这一段、不用重发全文。'
         + 'anchor 必须与原文逐字一致且在全文里唯一；不唯一或找不到会被拒绝（把 anchor 前后多带几句再试）。'
         + '改完后用户右侧面板会自动刷新。',
       parameters: docSchema({
@@ -1533,7 +1534,12 @@ function registerDocTools(ctx, config) {
 
     toolCtx.effect(() => toolCtx.tools.register({
       name: 'doc_append',
-      description: '在对话文档末尾追加内容（不重发全文）。文档不存在时用它创建第一份。',
+      /* 说明必须是「首选」语气：以前写成中性描述，模型就改用写文件工具把报告落到工作区，
+         用户在看板里看不到（2026-11-28 实测：C 盘诊断报告写到了 D:\DSH工作区\临时\）。 */
+      description: '**长文交付（报告 / 方案 / 清单 / 规格 / 总结）一律用这个工具**：它写进本会话的对话文档目录，'
+        + '用户右侧「文档」面板会立刻显示、可以划句批注、可以写回。'
+        + '不要为了交付文档去 Write 一个 .md 到工作区——那样用户看不到，也不进面板。'
+        + '文档不存在时用它创建第一份；之后接着写就再调用一次（不重发全文）。',
       parameters: docSchema({
         text: { type: 'string', description: '要追加的 Markdown（会被接在正文末尾，自动补一个空行）' },
         title: { type: 'string', description: '追加到哪一份（文档标题）；省略＝最新一份；不存在则按这个标题新建' },
