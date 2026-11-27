@@ -4170,7 +4170,7 @@ window.__ModuleLoader__.load({
 
     const DOC_PATH = '对话文档'
     /* 文档栏上会显示它：一眼看出跑的是不是刚改的那份客户端。 */
-    const PLUGIN_VERSION = '0.109.1'
+    const PLUGIN_VERSION = '0.110.0'
 
     /** 在聊天流里找最新一份 ```dsh-doc 围栏（助手输出的文档）。 */
     function scanDocBlocks() {
@@ -6073,8 +6073,13 @@ window.__ModuleLoader__.load({
           : store.active)
       /* 文档按会话隔离：有条目 sid 的只给它自己那个会话看；没有 sid 的老数据，
          第一次在某个会话里显示时就认领给那个会话（只认领一次，别处不再串）。 */
+      /* 归属按「文件目录的会话尾巴」判，不只信 sid —— sid 被双实例时期写串过，
+         于是别的会话的文档也能盖着「本会话」的章显示出来（用户 2026-11-27 报的现象）。 */
+      const ownTail = 'file:' + sessionTail(sessionId) + '/'
+      const docKeyRaw = store.doc !== null && store.doc !== undefined && typeof store.doc.key === 'string' ? store.doc.key : ''
+      const docKeyMine = docKeyRaw.indexOf('file:') !== 0 || docKeyRaw.indexOf(ownTail) === 0
       const docSession = store.doc !== null && store.doc !== undefined ? store.doc.sid : undefined
-      const docStored = store.doc !== null && store.doc !== undefined
+      const docStored = store.doc !== null && store.doc !== undefined && docKeyMine
         && (docSession === undefined || docSession === null || docSession === sessionId)
         ? store.doc
         : null
@@ -6087,6 +6092,9 @@ window.__ModuleLoader__.load({
         .map(([key, value]) => ({ key, title: value.title, text: value.text, at: value.at, sid: value.sid }))
         /* 只列本会话的：没有 sid 的老条目一律不列（它们会在自己那个会话里被认领回来）。 */
         .filter(entry => entry.sid === sessionId)
+        /* 同一条尾巴规则：file:<别的会话>/… 的老条目不再列到本会话里。 */
+        .filter(entry => String(entry.key).indexOf('file:') !== 0
+          || String(entry.key).indexOf('file:' + sessionTail(sessionId) + '/') === 0)
         .sort((a, b) => b.at - a.at), [library, sessionId])
       /* pick 为空 = 跟着聊天走（最新那份）；否则只读查看历史某一份。 */
       /* 兜底：state.doc 的 sid 过期（宿主重启/会话重建换过 id），但本会话文档库里明明存着它 ——
@@ -6511,6 +6519,13 @@ window.__ModuleLoader__.load({
           if (runtime.lastSid !== undefined && runtime.lastSid !== null
             && runtime.lastSid !== sessionId && typeof runtime.lastSid === 'string') return
           runtime.docWhy = ''
+          /* 面板里这份如果属于别的会话（按文件目录判），先放下：本会话的文档要么从聊天进来，
+             要么从文档库 / 磁盘恢复。否则就会出现「这个会话的文档在别的会话窗口里」。 */
+          if (state.doc !== null && state.doc !== undefined && typeof state.doc.key === 'string'
+            && String(state.doc.key).indexOf('file:') === 0
+            && String(state.doc.key).indexOf(ownTail) !== 0) {
+            commit({ doc: null, docPick: '', docView: null })
+          }
           load()
           adoptFromLibrary()
           /* 聊天里扫不到、库里也没有 → 最后才试磁盘上的文件（方案 B′）。 */
