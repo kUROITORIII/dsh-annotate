@@ -5433,7 +5433,7 @@ window.__ModuleLoader__.load({
 
     const DOC_PATH = '对话文档'
     /* 文档栏上会显示它：一眼看出跑的是不是刚改的那份客户端。 */
-    const PLUGIN_VERSION = '0.123.0'
+    const PLUGIN_VERSION = '0.123.1'
 
     /** 在聊天流里找最新一份 ```dsh-doc 围栏（助手输出的文档）。 */
     /** 测量包一层（7.2）：真实实现在 scanDocBlocksRaw。 */
@@ -9642,6 +9642,11 @@ window.__ModuleLoader__.load({
                   className: 'dsha-nav-item',
                   title: '会话 id 变化（重启/续话）后，旧目录里的文档会看不到；点这里把其它会话目录的 .md 都复制进本会话（只增不删）',
                   onClick: () => {
+                    /* 本会话已经有文档时先问一句：继续只会追加「不同名」的那些，容易产生一堆近似重复。 */
+                    if (docs.length > 0) {
+                      const sure = window.confirm('本会话已经有 ' + String(docs.length) + ' 份文档。\n\n导入只会补充「本会话没有的文件名」，可能带进同名不同写法的重复项。继续吗？')
+                      if (sure !== true) return
+                    }
                     void (async () => {
                       try {
                         const data = await fetch('/annotate-doc/rescue', {
