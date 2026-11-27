@@ -5427,7 +5427,7 @@ window.__ModuleLoader__.load({
 
     const DOC_PATH = '对话文档'
     /* 文档栏上会显示它：一眼看出跑的是不是刚改的那份客户端。 */
-    const PLUGIN_VERSION = '0.120.2'
+    const PLUGIN_VERSION = '0.121.0'
 
     /** 在聊天流里找最新一份 ```dsh-doc 围栏（助手输出的文档）。 */
     /** 测量包一层（7.2）：真实实现在 scanDocBlocksRaw。 */
@@ -10443,6 +10443,40 @@ window.__ModuleLoader__.load({
           } catch (error) {
             console.warn('[annotate] 读不到插件配置，设置页的改动不会同步到本地', error)
           }
+        })
+
+        /* 0.121：在 better-sidebar 的文件右键菜单里加一条「用批注面板打开」。
+           做法是把那个文件复制进本会话的文档目录（POST /annotate-doc/import），
+           然后让面板切过去 —— 这样工作区里的 md / 表格也能用插件的渲染与批注。 */
+        ctx.inject(['betterSidebar'], (sidebarCtx) => {
+          const sidebar = sidebarCtx.betterSidebar
+          if (sidebar === null || sidebar === undefined || typeof sidebar.registerFileAction !== 'function') return
+          const OPENABLE = /\.(md|markdown|txt|csv|xlsx|docx|pptx|js|mjs|ts|tsx|json|log|py)$/iu
+          sidebarCtx.effect(() => sidebar.registerFileAction({
+            id: 'dsh-annotate:open-in-panel',
+            label: () => '用批注面板打开',
+            order: 40,
+            when: row => row !== null && row !== undefined && row.isDir !== true
+              && typeof row.path === 'string' && OPENABLE.test(row.path),
+            run: async (args) => {
+              const file = String(args === null || args === undefined || args.path === undefined ? '' : args.path)
+              const sid = String(args === null || args === undefined || args.sessionId === undefined ? '' : args.sessionId)
+              if (file === '' || sid === '') return
+              const response = await fetch('/annotate-doc/import', {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ sid, path: file }),
+              })
+              const data = await response.json()
+              if (data === null || data.ok !== true || typeof data.file !== 'string') {
+                const why = data === null ? '' : String(data.reason === undefined ? '' : data.reason)
+                if (typeof args.fail === 'function') args.fail('导入失败：' + (why === '' ? '未知原因' : why))
+                return
+              }
+              await openSessionFile(sid, data.file)
+              openDocTab()
+            },
+          }), 'annotate: 文件菜单入口')
         })
 
         /* 客户端命令 /doctab：不经过模型，只打开插件自己的文档面板。 */

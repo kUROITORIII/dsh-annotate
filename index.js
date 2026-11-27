@@ -468,7 +468,7 @@ const FILE_KIND_BY_EXT = {
 /** 本版真正能读的类型。 */
 const P1_KINDS = new Set(['md', 'txt', 'code', 'csv'])
 /** 0.116 起真正能读的类型（P1 四种 + xlsx）。 */
-const READABLE_KINDS = new Set([...P1_KINDS, 'xlsx'])
+const READABLE_KINDS = new Set([...P1_KINDS, 'xlsx', 'docx', 'pptx'])
 /** 表格上限：超出截断并标 `caps.truncated`。 */
 const TABLE_MAX_ROWS = 5000
 const TABLE_MAX_COLS = 64
@@ -894,6 +894,111 @@ function parseXlsx(buf, maxRows, maxCols) {
  * 读一个会话文件，组出 `/annotate-file` 的响应体与状态码（拆出来便于离线测）。
  * @returns {Promise<{status: number, body: object}>}
  */
+/** 从 OOXML 里抽纯文本（docx / pptx 共用）：保留段落边界，丢掉格式。 */
+function ooxmlText(xml) {
+  const body = String(xml)
+  /* 段落 / 换行 / 制表符 换成可读文本。 */
+  const flat = body
+    .replace(/<w:br\b[^>]*\/>/gu, '\n')
+    .replace(/<w:tab\b[^>]*\/>/gu, '\t')
+    .replace(/<\/w:p>/gu, '\n')
+    .replace(/<\/a:p>/gu, '\n')
+  const runs = []
+  const re = /<(?:w|a):t(?:\s[^>]*)?>([\s\S]*?)<\/(?:w|a):t>/gu
+  let last = 0
+  let hit = re.exec(flat)
+  while (hit !== null) {
+    runs.push({ at: hit.index, text: xmlDecode(hit[1]) })
+    last = hit.index + hit[0].length
+    hit = re.exec(flat)
+  }
+  if (runs.length === 0) {
+    /* 没有文本节点：直接把标签剥了兜底。 */
+    return xmlDecode(flat.replace(/<[^>]+>/gu, '')).replace(/\n{3,}/gu, '\n\n').trim()
+  }
+  /* 用「fragment 位置」还原段落：段落结束标记之前的文本串成一行。 */
+  let out = ''
+  let cursor = 0
+  for (const run of runs) {
+    const between = flat.slice(cursor, run.at)
+    const breaks = (between.match(/\n/gu) || []).length
+    out += '\n'.repeat(breaks) + run.text
+    cursor = run.at
+  }
+  out += flat.slice(cursor).replace(/<[^>]+>/gu, '').replace(/[^\n]/gu, '')
+  return out
+}
+
+/** docx：word/document.xml 的段落 → 纯文本（表格行用 `a | b` 形式）。 */
+function parseDocx(buf) {
+  const zip = readZip(buf)
+  const get = (name) => {
+    const one = zip.get(name)
+    return one === undefined ? '' : one().toString('utf8')
+  }
+  const body = get('word/document.xml')
+  if (body === '') throw new Error('docx 里没有 word/document.xml')
+  /* 表格先摊平成「| a | b |」行，免得和正文粘在一起。 */
+  const withTables = body.replace(/<w:tbl>[\s\S]*?<\/w:tbl>/gu, (table) => {
+    const rows = []
+    const rowRe = /<w:tr\b[\s\S]*?<\/w:tr>/gu
+    let row = rowRe.exec(table)
+    while (row !== null) {
+      const cells = []
+      const cellRe = /<w:tc\b[\s\S]*?<\/w:tc>/gu
+      let cell = cellRe.exec(row[0])
+      while (cell !== null) {
+        cells.push(ooxmlText(cell[0]).replace(/\s*\n\s*/gu, ' ').trim())
+        cell = cellRe.exec(row[0])
+      }
+      rows.push('| ' + cells.join(' | ') + ' |')
+      row = rowRe.exec(table)
+    }
+    /* 表格行要包回 `<w:t>`，否则纯文本抽取（只认 w:t）会把它们丢掉。 */
+    const escaped = rows.map(line => line.replace(/&/gu, '&amp;').replace(/</gu, '&lt;').replace(/>/gu, '&gt;'))
+    return escaped.map(line => '<w:p><w:t xml:space="preserve">' + line + '</w:t></w:p>').join('')
+  })
+  const text = ooxmlText(withTables).replace(/[ \t]+\n/gu, '\n').replace(/\n{3,}/gu, '\n\n').trim()
+  return { text, paragraphs: text === '' ? 0 : text.split('\n').length }
+}
+
+/** pptx：按 presentation.xml 的顺序读每页，页与页之间用 `--- 第 N 页 ---` 分隔。 */
+function parsePptx(buf) {
+  const zip = readZip(buf)
+  const get = (name) => {
+    const one = zip.get(name)
+    return one === undefined ? '' : one().toString('utf8')
+  }
+  const presentation = get('ppt/presentation.xml')
+  const rels = get('ppt/_rels/presentation.xml.rels')
+  const targets = new Map()
+  for (const tag of rels.match(/<Relationship\b[^>]*\/?>/gu) || []) {
+    const id = (tag.match(/Id="([^"]+)"/u) || [])[1]
+    const target = (tag.match(/Target="([^"]+)"/u) || [])[1]
+    if (id !== undefined && target !== undefined) targets.set(id, target.replace(/^\/?ppt\//u, ''))
+  }
+  const order = []
+  for (const tag of presentation.match(/<p:sldId\b[^>]*\/?>/gu) || []) {
+    const rid = (tag.match(/r:id="([^"]+)"/u) || [])[1]
+    if (rid !== undefined && targets.has(rid)) order.push(targets.get(rid))
+  }
+  const slides = order.length > 0 ? order : [...zip.keys()].filter(name => /^ppt\/slides\/slide\d+\.xml$/u.test(name)).sort((a, b) => {
+    const na = Number((a.match(/(\d+)\.xml$/u) || [])[1] || 0)
+    const nb = Number((b.match(/(\d+)\.xml$/u) || [])[1] || 0)
+    return na - nb
+  })
+  const parts = []
+  slides.forEach((name, index) => {
+    const xml = get('ppt/' + name.replace(/^ppt\//u, ''))
+    if (xml === '') return
+    const text = ooxmlText(xml).replace(/[ \t]+\n/gu, '\n').replace(/\n{2,}/gu, '\n').trim()
+    parts.push('--- 第 ' + String(index + 1) + ' 页 ---\n' + text)
+  })
+  if (parts.length === 0) throw new Error('pptx 里没有可读的幻灯片')
+  return { text: parts.join('\n\n'), slides: parts.length }
+}
+
+
 async function readSessionFile(root, sessionId, rawPath) {
   const resolved = resolveSessionFile(root, sessionId, rawPath)
   if (resolved.ok !== true) return { status: resolved.status, body: { ok: false, reason: resolved.reason } }
@@ -920,6 +1025,18 @@ async function readSessionFile(root, sessionId, rawPath) {
     }
     const truncated = model.sheets.some(sheet => sheet.truncated === true)
     return { status: 200, body: { ok: true, ...head, model, caps: { ...capsOf(kind), truncated } } }
+  }
+  if (kind === 'docx' || kind === 'pptx') {
+    /* 0.121：Word / PPT 只读，解析成纯文本（段落 / 每页用 `--- 第 N 页 ---` 分隔）。
+       客户端复用纯文本那套渲染与批注，表格与排版保真留到 UI 那一轮。 */
+    let parsed = null
+    try {
+      const officeBuf = await fs.readFile(resolved.full)
+      parsed = kind === 'docx' ? parseDocx(officeBuf) : parsePptx(officeBuf)
+    } catch (error) {
+      return { status: 415, body: { ok: false, reason: 'parse-failed', ...head, message: error instanceof Error ? error.message : String(error) } }
+    }
+    return { status: 200, body: { ok: true, ...head, text: parsed.text, caps: capsOf(kind), meta: kind === 'docx' ? { paragraphs: parsed.paragraphs } : { slides: parsed.slides } } }
   }
   const text = await fs.readFile(resolved.full, 'utf8')
   if (kind === 'csv') {
@@ -1259,6 +1376,55 @@ async function openInExplorer(target) {
  * @param {any} ctx 宿主上下文。
  * @param {any} config 本行的 Config。
  */
+/**
+ * 把工作区里的一个文件复制进本会话的文档目录（右键菜单「用批注面板打开」用）。
+ * @returns {Promise<{status: number, body: object}>}
+ */
+async function importSessionFile(root, sessionId, rawPath) {
+  const raw = String(rawPath === undefined || rawPath === null ? '' : rawPath).trim()
+  if (raw === '') return { status: 400, body: { ok: false, reason: 'no-path' } }
+  if (path.isAbsolute(raw) !== true) return { status: 400, body: { ok: false, reason: 'need-absolute' } }
+  const source = path.resolve(raw)
+  let stat = null
+  try {
+    stat = await fs.stat(source)
+  } catch (error) {
+    return { status: 404, body: { ok: false, reason: 'missing' } }
+  }
+  if (stat.isFile() !== true) return { status: 400, body: { ok: false, reason: 'not-a-file' } }
+  if (stat.size > MAX_DOC_BYTES) return { status: 413, body: { ok: false, reason: 'too-large' } }
+  const tail = sessionTailOf(sessionId)
+  const docsDir = path.join(root, tail)
+  const inside = path.relative(path.resolve(root), source)
+  if (inside !== '' && inside.startsWith('..') !== true) {
+    /* 已经在本会话目录里：直接用，不复制。 */
+    const parts = inside.split(/[\\/]+/u)
+    if (parts.length === 2 && parts[0] === tail) {
+      return { status: 200, body: { ok: true, file: parts[1], copied: false } }
+    }
+    /* 在别的会话目录里：不替它搬，避免又把归属搞混。 */
+    return { status: 409, body: { ok: false, reason: 'cross-session' } }
+  }
+  await fs.mkdir(docsDir, { recursive: true })
+  const base = path.basename(source)
+  const title = base.replace(/\.[^.]+$/u, '')
+  const ext = base.slice(title.length)
+  let file = base
+  for (let n = 2; n <= 99; n += 1) {
+    let exists = true
+    try {
+      await fs.access(path.join(docsDir, file))
+    } catch (error) {
+      exists = false
+    }
+    if (exists !== true) break
+    file = title + ' (' + String(n) + ')' + ext
+  }
+  await fs.copyFile(source, path.join(docsDir, file))
+  return { status: 200, body: { ok: true, file, copied: true, bytes: stat.size } }
+}
+
+
 function registerDocRoute(ctx, config) {
   ctx.inject(['webServer'], (webCtx) => {
     webCtx.effect(() => webCtx.webServer.register({
@@ -1361,6 +1527,27 @@ function registerDocRoute(ctx, config) {
             await fs.mkdir(target, { recursive: true })
             await openInExplorer(target)
             sendJson(res, 200, { ok: true, target })
+            return
+          }
+
+          /* 0.121：右键菜单「用批注面板打开」——把工作区里的文件复制进本会话目录。 */
+          if (req.method === 'POST' && parsed.pathname === '/annotate-doc/import') {
+            const raw = await readBody(req)
+            let payload = null
+            try {
+              payload = JSON.parse(raw.toString('utf8'))
+            } catch (error) {
+              sendJson(res, 400, { ok: false, reason: 'bad-json' })
+              return
+            }
+            const sid = payload === null || typeof payload !== 'object' ? '' : String(payload.sid === undefined ? '' : payload.sid)
+            if (sid === '') {
+              sendJson(res, 400, { ok: false, reason: 'no-sid' })
+              return
+            }
+            const target = payload === null || typeof payload !== 'object' ? '' : String(payload.path === undefined ? '' : payload.path)
+            const out = await importSessionFile(root, sid, target)
+            sendJson(res, out.status, out.body)
             return
           }
 
