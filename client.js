@@ -373,6 +373,26 @@ window.__ModuleLoader__.load({
   background:color-mix(in srgb,var(--dsw-alias-bg-base) 80%,transparent);
   font-family:ui-monospace,Consolas,monospace;font-size:.87em;line-height:1.7}
 .dsha-doc-span{border-radius:3px}
+.dsha-file-pre{margin:0;padding:12px 14px;border-radius:8px;overflow:auto;white-space:pre;tab-size:4;
+  font-family:ui-monospace,Consolas,monospace;font-size:.87em;line-height:1.65;user-select:text;
+  background:color-mix(in srgb,var(--dsw-alias-bg-layer-2) 60%,transparent)}
+.dsha-file-tip{padding:22px 14px;text-align:center;line-height:1.7;color:var(--dsw-alias-label-secondary);font-size:12px}
+.dsha-file-notice{display:flex;align-items:center;gap:8px;margin:0 0 10px;padding:6px 10px;border-radius:6px;font-size:12px;
+  background:rgba(255,150,60,.14);color:var(--dsw-alias-label-primary)}
+.dsha-file-notice button{margin-left:auto}
+.dsha-tv-wrap{overflow:auto;max-height:100%}
+.dsha-tv{border-collapse:separate;border-spacing:0;font-size:12px;line-height:1.55}
+.dsha-tv th,.dsha-tv td{border-right:1px solid var(--dsw-alias-border-l1);border-bottom:1px solid var(--dsw-alias-border-l1);
+  padding:4px 8px;text-align:left;vertical-align:top;white-space:pre-wrap;max-width:360px;cursor:cell}
+.dsha-tv thead th{position:sticky;top:0;z-index:1;font-weight:600;white-space:nowrap;
+  background:var(--dsw-alias-bg-layer-2,#2a2a2e)}
+.dsha-tv .dsha-tv-rn{position:sticky;left:0;color:var(--dsw-alias-label-secondary);text-align:right;cursor:default;
+  background:var(--dsw-alias-bg-layer-2,#2a2a2e);font-weight:400}
+.dsha-tv td[data-on="1"]{outline:2px solid rgba(77,107,254,.8);outline-offset:-2px}
+.dsha-tv td[data-status="queued"]{background:rgba(77,107,254,.20)}
+.dsha-tv td[data-status="sent"]{background:rgba(77,107,254,.30)}
+.dsha-tv td[data-status="answered"]{background:rgba(60,190,120,.28)}
+.dsha-tv-foot{padding:6px 2px;font-size:11px;color:var(--dsw-alias-label-secondary)}
 
 .dsha-doc-span[data-status="queued"]{background:rgba(77,107,254,.20);
   box-shadow:inset 0 -2px 0 rgba(77,107,254,.75)}
@@ -748,7 +768,7 @@ window.__ModuleLoader__.load({
     const TARGET_TTL = 60000
 
     function emptyState() {
-      return { schema: SCHEMA, batchSeq: 0, sessions: {}, open: false, active: null, undo: null, surface: null, debug: '', ui: null, collapsed: {}, docOpen: false, docPending: null, docToolbar: null, doc: null, docEditing: false, docThread: null, docThreadBox: null, docWide: false, docWideBox: null, docFloatBox: null, docDrawer: false, docDrawerW: 340, docPick: '', docView: null, docFont: 15, docFontLocal: false, docSid: '', docs: {}, docLibraryLegacy: null, docMigration: null, docDemote: true, docDemoted: 0, sentTail: '', sentTails: [], picked: {}, reanchorId: '', reanchorHint: '', autoDoc: true, autoDocLocal: false, hideDocBlocks: true, docSeen: '', onlyQueued: false, onlyLost: false, keepReplyWindow: 4, docFind: '', docFindAt: 0, docFindOpen: false, reactions: '', wideRightClick: true, dockDocTab: false, docDetached: false }
+      return { schema: SCHEMA, batchSeq: 0, sessions: {}, open: false, active: null, undo: null, surface: null, debug: '', ui: null, collapsed: {}, docOpen: false, docPending: null, docToolbar: null, doc: null, docEditing: false, docThread: null, docThreadBox: null, docWide: false, docWideBox: null, docFloatBox: null, docDrawer: false, docDrawerW: 340, docPick: '', docView: null, docFont: 15, docFontLocal: false, docSid: '', docs: {}, docLibraryLegacy: null, docMigration: null, docDemote: true, docDemoted: 0, sentTail: '', sentTails: [], picked: {}, reanchorId: '', reanchorHint: '', autoDoc: true, autoDocLocal: false, hideDocBlocks: true, docSeen: '', onlyQueued: false, onlyLost: false, keepReplyWindow: 4, docFind: '', docFindAt: 0, docFindOpen: false, reactions: '', wideRightClick: true, dockDocTab: false, docDetached: false, docNotice: '' }
     }
 
     /** 聊天引文可以压空白；文件引文必须逐字保留换行，否则模型定位不到原文。 */
@@ -885,6 +905,73 @@ window.__ModuleLoader__.load({
       return reactionText(next)
     }
 
+    /* ------------------------------------------------ 0.115 · 批注的 ref + locator（P1 落地，P2 直接用） */
+
+    /** ref = { sid, fileKey }：批注挂在哪个会话的哪个文件上。坏输入 → null。 */
+    function sanitizeRef(raw) {
+      if (raw === null || raw === undefined || typeof raw !== 'object') return null
+      const sid = typeof raw.sid === 'string' ? raw.sid : ''
+      const fileKey = typeof raw.fileKey === 'string' ? raw.fileKey : ''
+      if (sid === '' && fileKey === '') return null
+      return { sid, fileKey }
+    }
+
+    /**
+     * locator：批注在文件里的位置。
+     * - md   → { kind:'md', blockIndex, startChar, endChar }
+     * - cell → { kind:'cell', sheet, row, col }（row/col 从 0 起，row 0 是表头那一行）
+     * - text → { kind:'text', blockIndex:0, startChar, endChar, line }（txt / 代码，line 从 1 起）
+     * 认不出的 kind → null。
+     */
+    function sanitizeLocator(raw) {
+      if (raw === null || raw === undefined || typeof raw !== 'object') return null
+      const int = (value) => (typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.floor(value) : 0)
+      if (raw.kind === 'md') {
+        return { kind: 'md', blockIndex: int(raw.blockIndex), startChar: int(raw.startChar), endChar: int(raw.endChar) }
+      }
+      if (raw.kind === 'cell') {
+        return { kind: 'cell', sheet: typeof raw.sheet === 'string' ? raw.sheet : '', row: int(raw.row), col: int(raw.col) }
+      }
+      if (raw.kind === 'text') {
+        return { kind: 'text', blockIndex: 0, startChar: int(raw.startChar), endChar: int(raw.endChar), line: Math.max(1, int(raw.line)) }
+      }
+      return null
+    }
+
+    /** 列序号 → 列名：0→A，25→Z，26→AA。 */
+    function colLetters(col) {
+      let n = (typeof col === 'number' && Number.isFinite(col) && col >= 0 ? Math.floor(col) : 0) + 1
+      let out = ''
+      while (n > 0) {
+        const r = (n - 1) % 26
+        out = String.fromCharCode(65 + r) + out
+        n = Math.floor((n - 1) / 26)
+      }
+      return out
+    }
+
+    /** 单元格名：列名 + 行号（行号从 1 起，表头是第 1 行）。 */
+    function cellLabel(row, col) {
+      const r = typeof row === 'number' && Number.isFinite(row) && row >= 0 ? Math.floor(row) : 0
+      return colLetters(col) + String(r + 1)
+    }
+
+    /** 单元格批注的引文：`B3: 12.5%`。 */
+    function cellQuote(rows, row, col) {
+      const line = Array.isArray(rows) ? rows[row] : undefined
+      const value = Array.isArray(line) && line[col] !== undefined && line[col] !== null ? String(line[col]) : ''
+      return cellLabel(row, col) + ': ' + value
+    }
+
+    /** 偏移 → 行号（从 1 起），纯文本批注发出去写成 `文件:行号`。 */
+    function lineAtOffset(text, offset) {
+      const body = typeof text === 'string' ? text : ''
+      const at = Math.max(0, Math.min(typeof offset === 'number' && Number.isFinite(offset) ? Math.floor(offset) : 0, body.length))
+      let line = 1
+      for (let index = 0; index < at; index += 1) if (body.charCodeAt(index) === 10) line += 1
+      return line
+    }
+
     function migrateItem(raw) {
       if (raw === null || typeof raw !== 'object') return null
       const quote = typeof raw.quote === 'string' ? raw.quote : null
@@ -929,6 +1016,13 @@ window.__ModuleLoader__.load({
       if (typeof raw.slot === 'number') item.slot = raw.slot
       if (typeof raw.suggested === 'string') item.suggested = raw.suggested
       if (typeof raw.docKey === 'string') item.docKey = raw.docKey
+      /* 0.115：ref + locator 与 docKey 并存一个版本；旧条目没有就不补（按 docKey 解析，逻辑不动）。 */
+      {
+        const ref = sanitizeRef(raw.ref)
+        if (ref !== null) item.ref = ref
+        const locator = sanitizeLocator(raw.locator)
+        if (locator !== null) item.locator = locator
+      }
       if (typeof raw.reply === 'string') item.reply = raw.reply
       if (typeof raw.repliedAt === 'number') item.repliedAt = raw.repliedAt
       if (Array.isArray(raw.thread)) {
@@ -1154,7 +1248,7 @@ window.__ModuleLoader__.load({
           batchSeq: state.batchSeq,
           sessions: state.sessions,
           ui: state.ui,
-          doc: state.doc,
+          doc: docForStorage(state.doc),
           docPick: state.docPick,
           docFont: state.docFont,
           /* schema 3：按会话分桶的文档库。 */
@@ -1238,6 +1332,13 @@ window.__ModuleLoader__.load({
       }
       const appends = Array.isArray(doc.appends) ? doc.appends : []
       for (const part of appends) mix(String(part === null || part === undefined ? '' : part.src))
+      /* 0.115：非 md 文件没有 blocks，指纹改看类型 + 正文 / 表格尺寸（md 文档不走这里，指纹不变）。 */
+      if (isFileDoc(doc)) {
+        mix(String(doc.fileKind) + (doc.unsupported === true ? '!' : '') + (doc.needsLoad === true ? '?' : ''))
+        mix(typeof doc.fileText === 'string' ? doc.fileText : '')
+        const rows = doc.model !== null && doc.model !== undefined && Array.isArray(doc.model.rows) ? doc.model.rows : []
+        mix(String(rows.length) + 'x' + String(rows.length === 0 ? 0 : rows[0].length) + '@' + String(doc.fileMtime || 0))
+      }
       return [
         String(doc.sid === undefined || doc.sid === null ? '' : doc.sid),
         String(doc.key === undefined || doc.key === null ? '' : doc.key),
@@ -1729,6 +1830,147 @@ window.__ModuleLoader__.load({
       return at > 5 ? k.slice(at + 1) : ''
     }
 
+    /* ------------------------------------------------ 0.115 · 非 Markdown 文件（txt / code / csv） */
+
+    /** 文件名 → kind（与宿主 fileKindOf 同一张表的子集；只用于图标与派发，认不出返回空串）。 */
+    const CLIENT_FILE_KINDS = {
+      md: 'md', markdown: 'md', txt: 'txt', log: 'txt', text: 'txt', csv: 'csv',
+      xlsx: 'xlsx', xlsm: 'xlsx', xls: 'xlsx', docx: 'docx', pptx: 'pptx',
+      png: 'image', jpg: 'image', jpeg: 'image', gif: 'image', webp: 'image', bmp: 'image', svg: 'image',
+    }
+    const CLIENT_CODE_EXTS = 'js cjs mjs jsx ts tsx json py css html htm xml yml yaml toml ini sh ps1 bat cmd sql c h cpp hpp cs java kt go rs rb php lua swift vue'.split(' ')
+    function fileKindOfName(name) {
+      const base = String(name === undefined || name === null ? '' : name)
+      const dot = base.lastIndexOf('.')
+      if (dot <= 0 || dot === base.length - 1) return ''
+      const ext = base.slice(dot + 1).toLowerCase()
+      if (Object.prototype.hasOwnProperty.call(CLIENT_FILE_KINDS, ext)) return CLIENT_FILE_KINDS[ext]
+      return CLIENT_CODE_EXTS.indexOf(ext) >= 0 ? 'code' : ''
+    }
+
+    /** 这份文档是不是「非 Markdown 文件」（txt / code / csv / 不支持的类型）。 */
+    function isFileDoc(doc) {
+      return doc !== null && doc !== undefined && typeof doc.fileKind === 'string'
+        && doc.fileKind !== '' && doc.fileKind !== 'md'
+    }
+
+    /**
+     * `/annotate-file` 的响应 → 面板里的文档对象。
+     * 关键：**正文不放进 `source`**（放 `fileText` / `model`）。`source` 是 Markdown 那条链路的字段：
+     * 写穿、入库、库同步、写回都看它；非 md 文件放进去就会被当成 Markdown 入库或写成 `x.csv.md`。
+     */
+    function fileDocOf(sessionId, body) {
+      const one = body === null || body === undefined || typeof body !== 'object' ? {} : body
+      const file = String(one.file === undefined ? '' : one.file)
+      const kind = typeof one.kind === 'string' && one.kind !== '' ? one.kind : fileKindOfName(file)
+      const doc = {
+        id: 'main',
+        sid: sessionId,
+        key: 'file:' + sessionTail(sessionId) + '/' + file,
+        fileName: file,
+        fileKind: kind === '' ? 'unknown' : kind,
+        title: typeof one.title === 'string' && one.title !== '' ? one.title : file,
+        source: '',
+        blocks: [],
+        baseCount: 0,
+        local: false,
+        appends: [],
+        fileMtime: typeof one.mtime === 'number' ? one.mtime : 0,
+        caps: one.caps !== null && typeof one.caps === 'object' ? one.caps : { read: false, writeBack: false, export: false },
+      }
+      if (one.ok !== true) {
+        doc.unsupported = true
+        return doc
+      }
+      if (one.model !== null && one.model !== undefined && one.model.type === 'table' && Array.isArray(one.model.rows)) {
+        doc.model = { type: 'table', rows: one.model.rows.map(row => (Array.isArray(row) ? row.map(cell => String(cell)) : [])) }
+      } else {
+        doc.fileText = typeof one.text === 'string' ? one.text : ''
+      }
+      return doc
+    }
+
+    /** 打开文件失败时给用户的一句话；成功（或「不支持预览」走文档对象显示）返回空串。 */
+    function fileOpenNotice(status, body) {
+      const reason = body !== null && body !== undefined && typeof body.reason === 'string' ? body.reason : ''
+      if (status === 409 || reason === 'cross-session') return '这个文件不在本会话的目录里，不能在这里打开。'
+      if (status === 404 || reason === 'missing') return '找不到这个文件（可能已经被移走或删除）。'
+      if (status === 413 || reason === 'too-large') return '文件太大（超过 8 MB），暂不预览。'
+      if (status === 415 || reason === 'unsupported') return ''
+      if (status >= 400 || (body !== null && body !== undefined && body.ok === false)) return '文件读取失败，稍后再试。'
+      return ''
+    }
+
+    /** 落 localStorage 的文档：非 md 文件不存正文 / 表格（可能有 5000×64），重开面板时按文件名重读。 */
+    function docForStorage(doc) {
+      if (isFileDoc(doc) !== true) return doc
+      const out = { ...doc }
+      delete out.model
+      delete out.fileText
+      if (out.unsupported !== true) out.needsLoad = true
+      return out
+    }
+
+    /**
+     * 非 md 文件的「伪段落」：只给「原文还在不在」这类判断用（docBlocksNow / 线程卡）。
+     * 纯文本 → 一整块；表格 → 每个单元格一块，正文是 `B3: 值`（和单元格批注的引文同形）。
+     */
+    const fileBlocksCache = new WeakMap()
+    function fileDocBlocks(doc) {
+      if (isFileDoc(doc) !== true) return []
+      const cached = fileBlocksCache.get(doc)
+      if (cached !== undefined) return cached
+      let out = []
+      if (doc.model !== null && doc.model !== undefined && Array.isArray(doc.model.rows)) {
+        const rows = doc.model.rows
+        rows.forEach((row, r) => {
+          if (!Array.isArray(row)) return
+          row.forEach((ignored, c) => out.push({ kind: 'cell', text: cellQuote(rows, r, c) }))
+        })
+      } else if (typeof doc.fileText === 'string' && doc.fileText !== '') {
+        out = [{ kind: 'pre', text: doc.fileText }]
+      }
+      fileBlocksCache.set(doc, out)
+      return out
+    }
+
+    /** 从宿主读一个本会话文件并切到面板；越界 / 找不到时在面板顶上给一句提示。 */
+    async function openSessionFile(sessionId, file) {
+      if (typeof sessionId !== 'string' || sessionId === '' || typeof file !== 'string' || file === '') return false
+      let status = 0
+      let body = null
+      try {
+        const response = await fetch('/annotate-file?sid=' + encodeURIComponent(sessionId) + '&path=' + encodeURIComponent(file))
+        status = response.status
+        body = await response.json()
+      } catch (error) {
+        commit({ docNotice: fileOpenNotice(500, null) })
+        return false
+      }      const notice = fileOpenNotice(status, body)
+      if (notice !== '') {
+        /* 重开面板时按名字重读失败（文件没了）：别一直停在「正在读取」。 */
+        const stale = isFileDoc(state.doc) && state.doc.needsLoad === true && state.doc.fileName === file
+        commit(stale ? { docNotice: notice, doc: null } : { docNotice: notice })
+        return false
+      }
+      const kind = body !== null && typeof body.kind === 'string' ? body.kind : ''
+      if (kind === 'md' && body.ok === true && typeof body.text === 'string') {
+        /* md 仍走原来那条链路（键、写穿规则都不变）。 */
+        const blocks = parseMarkdownDoc(body.text)
+        runtime.docWhy = 'file-open'
+        putDoc({
+          id: 'main', sid: sessionId,
+          key: 'file:' + sessionTail(sessionId) + '/' + String(body.file || file),
+          fileName: String(body.file || file), title: String(body.title || file),
+          source: body.text, blocks, baseCount: blocks.length, local: false, appends: [],
+        }, { docPick: '', docView: null, docNotice: '' })
+        return true
+      }
+      runtime.docWhy = 'file-open'
+      putDoc(fileDocOf(sessionId, { file, ...body }), { docPick: '', docView: null, docNotice: '' })
+      return true
+    }
+
     function freshDiskDocs(bucket, items, tail, now) {
       const out = []
       const mine = bucket === null || bucket === undefined ? {} : bucket
@@ -1944,7 +2186,8 @@ window.__ModuleLoader__.load({
         }).catch(() => {})
       } catch (error) { /* 忽略 */ }
       const cur = state.doc
-      if (cur !== null && cur !== undefined && typeof cur.key === 'string' && cur.key.indexOf(tail) === 0) {
+      /* 0.115：非 md 文件不在 /annotate-doc/list 里，别把它当「磁盘上没了」放下。 */
+      if (cur !== null && cur !== undefined && isFileDoc(cur) !== true && typeof cur.key === 'string' && cur.key.indexOf(tail) === 0) {
         const name = String(cur.key).slice(tail.length).replace(/\.md$/iu, '')
         if (present.has(name) !== true) commit({ doc: null, docPick: '', docView: null })
       }
@@ -1958,6 +2201,8 @@ window.__ModuleLoader__.load({
       const now = Date.now()
       if (now - docFileCheckedAt < 3000) return
       docFileCheckedAt = now
+      /* 0.115：非 md 文件不走 /annotate-doc/latest（那条只认 .md，会一直 404）。 */
+      if (isFileDoc(state.doc)) return
       try {
         /* 已经知道是哪份文件就带上 `?file=`：否则宿主的「最新一份」可能把面板拽到别的文档上。 */
         const knownFile = state.doc !== null && state.doc !== undefined && typeof state.doc.fileName === 'string'
@@ -2090,6 +2335,7 @@ window.__ModuleLoader__.load({
     /** 当前文档的块（批注面板判断「原文还在不在」用同一份）。 */
     function docBlocksNow() {
       const doc = state.doc
+      if (isFileDoc(doc)) return fileDocBlocks(doc)
       if (doc === null || doc === undefined || Array.isArray(doc.blocks) !== true) return []
       return doc.blocks
     }
@@ -2346,6 +2592,8 @@ window.__ModuleLoader__.load({
           blockIndex: typeof input.blockIndex === 'number' ? input.blockIndex : 0,
           startChar: typeof input.startChar === 'number' ? input.startChar : 0,
           endChar: typeof input.endChar === 'number' ? input.endChar : 0,
+          /* 0.115：表格单元格 / 纯文本的位置；不给就在 addAnnotation 里按 md 段落补一份。 */
+          locator: sanitizeLocator(input.locator),
         }
       }
       if (input.target !== 'file') return { target: 'chat' }
@@ -2437,6 +2685,11 @@ window.__ModuleLoader__.load({
         } else if (state.doc !== null && typeof state.doc.key === 'string' && state.doc.key !== '') {
           item.docKey = state.doc.key
         }
+        /* 0.115：新建批注一律写 ref + locator（与 docKey 并存一个版本）。 */
+        item.ref = { sid: String(sessionId === undefined || sessionId === null ? '' : sessionId), fileKey: typeof item.docKey === 'string' ? item.docKey : '' }
+        item.locator = resolved.locator !== null && resolved.locator !== undefined
+          ? resolved.locator
+          : { kind: 'md', blockIndex: resolved.blockIndex, startChar: resolved.startChar, endChar: resolved.endChar }
       }
       if (resolved.target === 'file') {
         item.path = resolved.path
@@ -2871,6 +3124,16 @@ window.__ModuleLoader__.load({
 
     /** 一条批注压成一行：位置 + 原文 + 要求（不带编号，像人说话）。 */
     function renderOneLine(entry) {
+      /* 0.115：表格单元格写成「文件名 · B3」，纯文本写成「文件名:行号」；md 段落仍是「第N段」。 */
+      const loc = entry !== null && entry !== undefined && entry.target === 'doc' && entry.locator !== null
+        && entry.locator !== undefined && typeof entry.locator === 'object' ? entry.locator : null
+      if (loc !== null && (loc.kind === 'cell' || loc.kind === 'text')) {
+        const name = typeof entry.path === 'string' && entry.path !== '' ? entry.path : '文件'
+        const at = loc.kind === 'cell'
+          ? name + ' · ' + (typeof loc.sheet === 'string' && loc.sheet !== '' ? loc.sheet + '!' : '') + cellLabel(loc.row, loc.col)
+          : name + ':' + String(typeof loc.line === 'number' ? loc.line : 1)
+        return `${at} ${renderQuote(entry.quote)} → ${clipQuote(entry.note, NOTE_MAX)}`
+      }
       const where = entry.target === 'doc'
         ? `第${String((typeof entry.blockIndex === 'number' ? entry.blockIndex : 0) + 1)}段 `
         : (typeof entry.path === 'string'
@@ -3084,6 +3347,7 @@ window.__ModuleLoader__.load({
             payload.blockIndex = target.blockIndex
             payload.startChar = target.startChar
             payload.endChar = target.endChar
+            if (target.locator !== undefined && target.locator !== null) payload.locator = target.locator
           } else {
             payload.absPath = target.absPath === undefined ? '' : target.absPath
             payload.lineStart = target.lineStart
@@ -5002,7 +5266,7 @@ window.__ModuleLoader__.load({
 
     const DOC_PATH = '对话文档'
     /* 文档栏上会显示它：一眼看出跑的是不是刚改的那份客户端。 */
-    const PLUGIN_VERSION = '0.114.2'
+    const PLUGIN_VERSION = '0.115.0'
 
     /** 在聊天流里找最新一份 ```dsh-doc 围栏（助手输出的文档）。 */
     /** 测量包一层（7.2）：真实实现在 scanDocBlocksRaw。 */
@@ -6254,6 +6518,11 @@ window.__ModuleLoader__.load({
           commit({ reanchorHint: '当前没有打开的文档，没法写回' })
           return
         }
+        /* 0.115：txt / 代码 / 表格是只读预览（caps.writeBack=false）。 */
+        if (isFileDoc(doc)) {
+          commit({ reanchorHint: '这类文件目前只读，不支持把结论写回' })
+          return
+        }
         /* 看历史版时不能写回：那会改「现在这份」，而你以为改的是眼前那份。 */
         if (state.docPick !== '' && state.docPick !== undefined) {
           commit({ reanchorHint: '正在看历史版：先回到最新那份再写回' })
@@ -6900,6 +7169,176 @@ window.__ModuleLoader__.load({
       }
     }
 
+    /* ------------------------------------------------ 0.115 · 非 md 文件的两种视图（DocPanel 只做派发） */
+
+    /** 批注状态汇总：同一处有多条时，sent > answered > queued。 */
+    function marksStatus(list) {
+      if (list.some(entry => entry.status === 'sent')) return 'sent'
+      if (list.some(entry => entry.status === 'answered')) return 'answered'
+      return 'queued'
+    }
+
+    /** 非 md 文件的选区额外信息：路径写文件名、位置写 text locator（行号）。md 文档返回 null。 */
+    function fileTargetExtra(doc, startChar, endChar) {
+      if (isFileDoc(doc) !== true) return null
+      const text = typeof doc.fileText === 'string' ? doc.fileText : ''
+      return {
+        path: typeof doc.fileName === 'string' && doc.fileName !== '' ? doc.fileName : DOC_PATH,
+        locator: { kind: 'text', blockIndex: 0, startChar, endChar, line: lineAtOffset(text, startChar) },
+      }
+    }
+
+    /** 纯文本 / 代码：等宽 <pre>，就是第 0 段（复用文档里现有的划句批注）。 */
+    function PlainFileView(props) {
+      const text = typeof props.text === 'string' ? props.text : ''
+      const marks = Array.isArray(props.marks) ? props.marks : []
+      const ranges = []
+      for (const entry of marks) {
+        const quote = typeof entry.quote === 'string' ? entry.quote : ''
+        if (quote === '') continue
+        let from = typeof entry.startChar === 'number' ? entry.startChar : -1
+        if (from < 0 || text.slice(from, from + quote.length) !== quote) {
+          const first = text.indexOf(quote)
+          from = first >= 0 && text.indexOf(quote, first + 1) < 0 ? first : -1
+        }
+        if (from >= 0) ranges.push({ from, to: from + quote.length, id: entry.id, status: entry.status })
+      }
+      ranges.sort((a, b) => a.from - b.from)
+      const pieces = []
+      let cursor = 0
+      for (const range of ranges) {
+        if (range.from < cursor) continue
+        if (range.from > cursor) pieces.push(text.slice(cursor, range.from))
+        pieces.push(h('span', { key: 'm' + String(pieces.length), className: 'dsha-doc-span', 'data-mark': range.id, 'data-status': range.status }, text.slice(range.from, range.to)))
+        cursor = range.to
+      }
+      if (cursor < text.length) pieces.push(text.slice(cursor))
+      return h('pre', { className: 'dsha-file-pre', 'data-block': '0', 'data-file-kind': props.kind }, pieces)
+    }
+
+    const TABLE_PAGE_ROWS = 500
+
+    /**
+     * 表格视图（csv）：表头吸附，单元格 `data-cell="R:C"`（R/C 从 0 起，R=0 是表头行）。
+     * 点单元格 → 复用现有批注气泡，locator = { kind:'cell', sheet:'', row, col }，引文 `B3: 值`。
+     * 有批注的单元格右上角一个数字角标，点角标开线程卡（data-mark，由 DocPanel 的点击处理）。
+     */
+    function TableView(props) {
+      const doc = props.doc
+      const sessionId = props.sessionId
+      const rows = doc !== null && doc !== undefined && doc.model !== undefined && doc.model !== null && Array.isArray(doc.model.rows)
+        ? doc.model.rows
+        : []
+      const [limit, setLimit] = React.useState(TABLE_PAGE_ROWS)
+      const [selected, setSelected] = React.useState('')
+      const byCell = new Map()
+      for (const entry of (Array.isArray(props.marks) ? props.marks : [])) {
+        const loc = entry.locator
+        if (loc === null || loc === undefined || loc.kind !== 'cell') continue
+        const key = String(loc.row) + ':' + String(loc.col)
+        const list = byCell.get(key)
+        if (list === undefined) byCell.set(key, [entry])
+        else list.push(entry)
+      }
+      if (rows.length === 0) return h('div', { className: 'dsha-file-tip' }, '这个表格是空的。')
+      const width = rows.reduce((max, row) => Math.max(max, Array.isArray(row) ? row.length : 0), 0)
+      const openCell = (event, r, c) => {
+        const target = event.target
+        if (target instanceof Element && target.closest('[data-mark]') !== null) return
+        if (typeof sessionId !== 'string' || sessionId === '') return
+        const quote = cellQuote(rows, r, c)
+        const rect = event.currentTarget.getBoundingClientRect()
+        setSelected(String(r) + ':' + String(c))
+        runtime.target = {
+          kind: 'doc',
+          path: typeof doc.fileName === 'string' && doc.fileName !== '' ? doc.fileName : DOC_PATH,
+          blockIndex: 0,
+          startChar: 0,
+          endChar: quote.length,
+          quote,
+          locator: { kind: 'cell', sheet: '', row: r, col: c },
+        }
+        runtime.targetAt = Date.now()
+        const spot = {
+          sessionId,
+          x: Math.max(8, Math.min(rect.left, window.innerWidth - 380)),
+          y: Math.max(54, Math.min(rect.bottom + 6, window.innerHeight - 260)),
+        }
+        /* 先收起旧气泡再开新的：气泡在挂载那一刻抓 runtime.target，不重挂就还是上一格。 */
+        commit({ surface: null, docToolbar: null, docPending: null })
+        window.setTimeout(() => commit({ surface: spot }), 0)
+      }
+      const cellOf = (tag, r, c) => {
+        const line = rows[r]
+        const value = Array.isArray(line) && line[c] !== undefined ? String(line[c]) : ''
+        const key = String(r) + ':' + String(c)
+        const here = byCell.get(key)
+        const newest = here === undefined ? null : here.slice().sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))[0]
+        return h(tag, {
+          key: String(c),
+          'data-cell': key,
+          'data-on': selected === key ? '1' : undefined,
+          'data-status': here === undefined ? undefined : marksStatus(here),
+          title: cellLabel(r, c) + ' · 点一下写批注',
+          onClick: event => openCell(event, r, c),
+        },
+          value,
+          newest === null
+            ? null
+            : h('span', {
+              className: 'dsha-doc-span',
+              'data-mark': newest.id,
+              'data-status': marksStatus(here),
+              title: String(here.length) + ' 条批注 · 点开看',
+              style: { marginLeft: '6px', padding: '0 5px', fontSize: '10px', cursor: 'pointer' },
+            }, String(here.length)))
+      }
+      const columns = []
+      for (let c = 0; c < width; c += 1) columns.push(c)
+      const shown = Math.min(rows.length, limit + 1)
+      const body = []
+      for (let r = 1; r < shown; r += 1) {
+        body.push(h('tr', { key: String(r) },
+          h('td', { className: 'dsha-tv-rn' }, String(r + 1)),
+          columns.map(c => cellOf('td', r, c))))
+      }
+      const truncated = doc.caps !== null && doc.caps !== undefined && doc.caps.truncated === true
+      return h('div', { className: 'dsha-tv-wrap' },
+        h('table', { className: 'dsha-tv' },
+          h('thead', null,
+            h('tr', null,
+              h('th', { className: 'dsha-tv-rn' }, '1'),
+              columns.map(c => cellOf('th', 0, c)))),
+          h('tbody', null, body)),
+        h('div', { className: 'dsha-tv-foot' },
+          String(rows.length) + ' 行 × ' + String(width) + ' 列'
+          + (truncated ? '（超过 5000 行或 64 列，已截断）' : ''),
+          shown < rows.length
+            ? h('button', {
+              type: 'button',
+              className: 'dsha-mini',
+              style: { marginLeft: '8px' },
+              onClick: () => setLimit(value => value + TABLE_PAGE_ROWS),
+            }, '再显示 ' + String(Math.min(TABLE_PAGE_ROWS, rows.length - shown)) + ' 行')
+            : null))
+    }
+
+    /** 非 md 文件的派发：表格 → TableView；有正文 → 纯文本；其余 → 一句提示（不报错、不白屏）。 */
+    function renderFileDoc(doc, sessionId, marks) {
+      if (doc.unsupported === true) {
+        const label = { xlsx: 'Excel 表格', docx: 'Word 文档', pptx: '演示文稿', image: '图片' }[doc.fileKind] || '这种文件'
+        return h('div', { className: 'dsha-file-tip' },
+          '「' + String(doc.fileName || doc.title || '') + '」是' + label + '，暂不支持预览。')
+      }
+      if (doc.needsLoad === true && doc.model === undefined && doc.fileText === undefined) {
+        return h('div', { className: 'dsha-file-tip' }, '正在读取「' + String(doc.fileName || '') + '」…')
+      }
+      if (doc.model !== null && doc.model !== undefined && doc.model.type === 'table') {
+        return h(TableView, { doc, sessionId, marks })
+      }
+      return h(PlainFileView, { text: doc.fileText, kind: doc.fileKind, marks })
+    }
+
     function DocPanel(props) {
       const embedded = props !== null && props !== undefined && props.embedded === true
       const wide = props !== null && props !== undefined && props.wide === true
@@ -6980,6 +7419,38 @@ window.__ModuleLoader__.load({
           || String(entry.key).indexOf('file:' + sessionTail(sessionId) + '/') === 0)
         .sort((a, b) => b.at - a.at)
         ), [library, sessionId])
+      /* 0.115：本会话目录里的非 md 文件（txt / 代码 / csv / 不支持的类型），列在文档清单下面。
+         只读清单、不进文档库：库与写穿规则只管 Markdown（第 2 节那十条不动）。 */
+      const [extraFiles, setExtraFiles] = React.useState([])
+      React.useEffect(() => {
+        if (!open || typeof sessionId !== 'string' || sessionId === '') return undefined
+        let alive = true
+        void (async () => {
+          try {
+            const listed = await fetch('/annotate-file/list?sid=' + encodeURIComponent(sessionId)).then(response => response.json())
+            if (!alive) return
+            const items = listed !== null && listed !== undefined && listed.ok === true && Array.isArray(listed.items) ? listed.items : []
+            setExtraFiles(items.map(item => ({
+              file: String(item.file === undefined ? '' : item.file),
+              kind: String(item.kind === undefined ? '' : item.kind),
+              supported: item.supported === true,
+              mtime: Number(item.mtime) || 0,
+            })).filter(item => item.file !== ''))
+          } catch (error) {
+            if (alive) setExtraFiles([])
+          }
+        })()
+        return () => { alive = false }
+      }, [open, sessionId, navOpen])
+      /* 0.115：localStorage 里只存了非 md 文件的「名字」（正文太大不存），面板打开时按名字重读一次。 */
+      const needsLoadKey = store.doc !== null && store.doc !== undefined && isFileDoc(store.doc) && store.doc.needsLoad === true
+        && store.doc.model === undefined && store.doc.fileText === undefined && store.doc.sid === sessionId
+        ? String(store.doc.fileName || '')
+        : ''
+      React.useEffect(() => {
+        if (!open || needsLoadKey === '') return
+        void openSessionFile(sessionId, needsLoadKey)
+      }, [open, needsLoadKey, sessionId])
       /* pick 为空 = 跟着聊天走（最新那份）；否则只读查看历史某一份。 */
       /* 兜底：state.doc 的 sid 过期（宿主重启/会话重建换过 id），但本会话文档库里明明存着它 ——
          直接拿库里的那份显示。虚拟列表把 dsh-doc 块卸掉之后，文档栏就是靠这条不空着。 */
@@ -7700,6 +8171,8 @@ window.__ModuleLoader__.load({
             startChar: located.start,
             endChar: located.end,
             quote: picked.text,
+            /* 0.115：txt / 代码文件写文件名 + 行号（md 文档这里是 null，什么都不加）。 */
+            ...(fileTargetExtra(state.doc, located.start, located.end) || {}),
           }
           runtime.targetAt = Date.now()
           const spot = spotForMouse(event)
@@ -7821,6 +8294,7 @@ window.__ModuleLoader__.load({
           startChar: bar.startChar,
           endChar: bar.endChar,
           quote: bar.quote,
+          ...(fileTargetExtra(state.doc, bar.startChar, bar.endChar) || {}),
         }
         runtime.targetAt = Date.now()
         try {
@@ -7853,6 +8327,7 @@ window.__ModuleLoader__.load({
           endChar: bar.endChar,
           quote: bar.quote,
           note: reaction.emoji + ' ' + reaction.meaning,
+          ...(fileTargetExtra(state.doc, bar.startChar, bar.endChar) || {}),
         })
         try {
           const selection = window.getSelection()
@@ -8463,7 +8938,7 @@ window.__ModuleLoader__.load({
               onClick: () => setNavOpen(value => !value),
             },
               /* 文件名并进按钮内部：整条（份数 + 文件名 + ▾）都可点，打开同一个下拉。 */
-              h('span', { className: 'dsha-doc-count' }, String(docs.length) + ' 份'),
+              h('span', { className: 'dsha-doc-count' }, String(docs.length + extraFiles.length) + ' 份'),
               (doc === null || doc === undefined ? '' : fileNameOfKey(doc.key)) === ''
                 ? null
                 : h('span', { className: 'dsha-doc-file' }, fileNameOfKey(doc.key)),
@@ -8493,8 +8968,10 @@ window.__ModuleLoader__.load({
                       className: 'dsha-nav-item',
                       'data-on': active ? '1' : '0',
                       onClick: () => {
+                        /* 0.115：正看着 txt/csv 时点「最新」那份 md，要把文件视图放下，由库兜底显示最新 md。 */
+                        const leaveFile = isFileDoc(state.doc) ? { doc: null } : {}
                         commit(newest.key === latestKey
-                          ? { docPick: '', docView: null }
+                          ? { docPick: '', docView: null, ...leaveFile }
                           : { docPick: newest.key, docView: { key: newest.key, text: newest.text, title: group.title, sid: sessionId } }, true)
                         setNavOpen(false)
                       },
@@ -8540,6 +9017,25 @@ window.__ModuleLoader__.load({
                           : null))
                       : null)
                 }),
+                /* 0.115：本会话目录里的其它文件（txt / 代码 / csv；xlsx 等列出来但提示暂不支持预览）。 */
+                extraFiles.length === 0
+                  ? null
+                  : h('div', { key: 'sep-files', className: 'dsha-nav-sep' }),
+                extraFiles.map(item => h('div', {
+                  key: 'f:' + item.file,
+                  className: 'dsha-nav-item',
+                  'data-on': doc !== null && doc !== undefined && doc.key === 'file:' + sessionTail(sessionId) + '/' + item.file ? '1' : '0',
+                  title: item.supported ? '打开 ' + item.file : item.file + '（暂不支持预览）',
+                  onClick: () => {
+                    void openSessionFile(sessionId, item.file)
+                    setNavOpen(false)
+                  },
+                },
+                  h('span', { className: 'dsha-nav-ico' }, typeIconOf(item.file)),
+                  h('span', null, item.file),
+                  item.supported
+                    ? null
+                    : h('span', { style: { flex: 'none', marginLeft: 'auto', color: 'var(--dsw-alias-label-secondary)' } }, '不支持预览'))),
                 /* ---- 分割线：上面是文档列表，下面是设置项（0.105 按用户要求分开） ---- */
                 h('div', { key: 'sep-list', className: 'dsha-nav-sep' }),
                 h('div', {
@@ -8819,7 +9315,17 @@ window.__ModuleLoader__.load({
           },
         },
           h('div', { className: 'dsha-doc-inner' },
-            (viewing === null ? blocks : viewBlocks).length === 0
+            /* 0.115：打开文件失败（越界 409 / 找不到 / 太大）时的一句提示。 */
+            typeof store.docNotice === 'string' && store.docNotice !== ''
+              ? h('div', { className: 'dsha-file-notice', role: 'status' },
+                h('span', null, store.docNotice),
+                h('button', { type: 'button', className: 'dsha-mini', onClick: () => commit({ docNotice: '' }) }, '×'))
+              : null,
+            /* 0.115 派发：blocks 有内容 → Markdown（下面原有的循环，一行没动）；
+               非 md 文件 → 表格 TableView / 纯文本 <pre> / 不支持预览的提示。 */
+            (viewing === null && isFileDoc(doc))
+              ? renderFileDoc(doc, sessionId, marks)
+              : (viewing === null ? blocks : viewBlocks).length === 0
               ? h('div', { className: 'dsha-empty' },
                 viewing === null ? '还没有文档。' : '这份文档是空的。',
                 h('br'),
@@ -9226,6 +9732,9 @@ window.__ModuleLoader__.load({
         encodeWav, resizeBox,
         shouldScanNow, perfLine, perfBlank, spliceLegacy, rafGeom, scanTuning: SCAN,
         migrateDocLibrary, sanitizeDocs, keyFitsSession, fileKeyTail, docBelongsTo, trimBucket, trimDocs, docDiagLines, sidBrief,
+        /* 0.115 · P1 */
+        sanitizeRef, sanitizeLocator, colLetters, cellLabel, cellQuote, lineAtOffset, renderOneLine,
+        fileKindOfName, isFileDoc, fileDocOf, fileOpenNotice, docForStorage, fileDocBlocks, docFingerprint, fileTargetExtra,
         libOf: (sid) => libOf(sid),
         stateOf: () => state,
       },

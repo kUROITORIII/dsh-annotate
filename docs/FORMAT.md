@@ -1,6 +1,6 @@
 # 对话文档块格式（dsh-doc 契约）
 
-**对应插件版本：0.114.2** ｜ 语法一改就要改这一行，并通知使用侧同步（见文末）。
+**对应插件版本：0.115.0** ｜ 语法一改就要改这一行，并通知使用侧同步（见文末）。
 
 这份文档是 `dsh-doc` 格式的**唯一真相源**。插件的解析器按它实现，`doc-review` 技能按它使用；
 两边不一致时以本文件为准——改语法的人负责同时改这里和版本号。
@@ -168,3 +168,28 @@ ${DSH_HOME}/annotate-docs/<会话尾 8 位>/_session.json   # 完整会话 id + 
 整篇重发既费 token，又会让段落重切、批注锚点漂。
 
 **回退**：删掉 `annotate-docs` 里对应文件夹即可；关掉落盘不影响插件其它功能。
+## 非 Markdown 文件（v0.115 起，P1）
+
+本节**不改** `dsh-doc` 围栏契约，只说明面板还能打开会话目录里的哪些文件。
+
+```
+GET /annotate-file?sid=<会话id>&path=<本会话目录内的文件名，或 <会话尾8位>/<文件名>>
+→ 200 { ok, kind, mtime, bytes, title, file, text?, model?, caps: { read, writeBack, export, truncated? } }
+→ 404 { ok:false, reason:'missing' }
+→ 409 { ok:false, reason:'cross-session' }   // 解析到别的会话目录或 annotate-docs 之外
+→ 415 { ok:false, reason:'unsupported', kind }   // xlsx / docx / pptx / image / 认不出的扩展名
+GET /annotate-file/list?sid=<会话id>   → 本会话目录里的非 .md 文件 { ok, items:[{ file, kind, supported, bytes, mtime }] }
+```
+
+| kind | 扩展名（节选） | 面板显示 | 写回 |
+| --- | --- | --- | --- |
+| `md` | `.md` | 原有 Markdown 渲染 | 可以 |
+| `txt` | `.txt` `.log` | 等宽纯文本，划句批注，发出去写 `文件名:行号` | 只读 |
+| `code` | `.js` `.ts` `.py` `.json` `.css` … | 同上 | 只读 |
+| `csv` | `.csv` | 表格（表头吸附），点单元格批注，发出去写 `文件名 · B3` | 只读 |
+| 其它 | `.xlsx` `.docx` `.pptx` 图片 | 提示「暂不支持预览」 | — |
+
+- csv：`"` 包裹、`""` 转义、字段内换行、CRLF 都按 RFC 4180 解析；上限 5000 行 × 64 列，超出截断并 `caps.truncated = true`。
+- 单元格名：列名（A、B…Z、AA）+ 行号（表头是第 1 行）。单元格批注的引文是 `B3: 12.5%`。
+- 批注条目从 0.115 起多两个字段（与 `docKey` 并存一个版本，旧条目没有就仍按 `docKey` 解析）：
+  `ref: { sid, fileKey }`，`locator`：md `{ kind:'md', blockIndex, startChar, endChar }` / 表格 `{ kind:'cell', sheet, row, col }` / 纯文本 `{ kind:'text', blockIndex:0, startChar, endChar, line }`。

@@ -1,6 +1,8 @@
 /**
  * dsh-annotate 的宿主半边。
  *
+ * 0.115 起另有 `/annotate-file`：按会话读 md/txt/code/csv（见 registerFileRoute）。
+ *
  * 现在只做两件事：
  *  1. 声明本行的 Config（设置页的表单就是它投影出来的，字段必须 `.volatile()`）；
  *  2. 注册 `/doc` 斜杠命令 —— 它在当前会话里发一条用户消息，让模型把刚才的讨论整理成文档。
@@ -93,6 +95,7 @@ export function apply(ctx, config) {
 
   registerTranscribeRoute(ctx)
   registerDocRoute(ctx, config)
+  registerFileRoute(ctx, config)
   registerClientLogRoute(ctx)
   registerDocTools(ctx, config)
 }
@@ -388,8 +391,13 @@ async function migrateLegacy(root, sessionId) {
   return moved
 }
 
-/** 列一个会话文件夹里的可读文档（按修改时间倒序）。 */
-async function listSessionDocs(root, sessionId) {
+/**
+ * 列一个会话文件夹里的可读文档（按修改时间倒序）。
+ * 默认只列 `.md`（`/annotate-doc/*` 与三个文档工具的契约，不许变）；
+ * `opts.others === true` 时改为只列**非 .md** 的文件，并带上 `kind`（0.115 `/annotate-file/list` 用）。
+ */
+async function listSessionDocs(root, sessionId, opts) {
+  const others = opts !== null && opts !== undefined && opts.others === true
   const dir = path.join(root, sessionTailOf(sessionId))
   const meta = await readMeta(dir)
   let names = []
@@ -400,6 +408,27 @@ async function listSessionDocs(root, sessionId) {
   }
   const items = []
   for (const name of names) {
+    if (others === true) {
+      if (name.endsWith('.md') === true || name === META_NAME) continue
+      const full = path.join(dir, name)
+      let stat = null
+      try {
+        stat = await fs.stat(full)
+      } catch (error) {
+        continue
+      }
+      if (stat.isFile() !== true) continue
+      const kind = fileKindOf(name)
+      items.push({
+        title: name,
+        file: name,
+        kind,
+        supported: P1_KINDS.has(kind),
+        bytes: stat.size,
+        mtime: stat.mtimeMs,
+      })
+      continue
+    }
     if (name.endsWith('.md') !== true) continue
     const full = path.join(dir, name)
     const stat = await fs.stat(full)
@@ -414,6 +443,211 @@ async function listSessionDocs(root, sessionId) {
   }
   items.sort((a, b) => b.mtime - a.mtime)
   return items
+}
+
+/* ------------------------------------------------ 通用文件读取（0.115 · P1：md / txt / code / csv） */
+
+/** 扩展名 → 文件类型。P1 只实现 md/txt/code/csv，其余类型认得出但返回 unsupported。 */
+const FILE_KIND_BY_EXT = {
+  md: 'md', markdown: 'md',
+  txt: 'txt', log: 'txt', text: 'txt',
+  js: 'code', cjs: 'code', mjs: 'code', jsx: 'code', ts: 'code', tsx: 'code', json: 'code',
+  py: 'code', css: 'code', html: 'code', htm: 'code', xml: 'code', yml: 'code', yaml: 'code',
+  toml: 'code', ini: 'code', sh: 'code', ps1: 'code', bat: 'code', cmd: 'code', sql: 'code',
+  c: 'code', h: 'code', cpp: 'code', hpp: 'code', cs: 'code', java: 'code', kt: 'code',
+  go: 'code', rs: 'code', rb: 'code', php: 'code', lua: 'code', swift: 'code', vue: 'code',
+  csv: 'csv',
+  xlsx: 'xlsx', xlsm: 'xlsx', xls: 'xlsx',
+  docx: 'docx', pptx: 'pptx',
+  png: 'image', jpg: 'image', jpeg: 'image', gif: 'image', webp: 'image', bmp: 'image', svg: 'image',
+}
+/** 本版真正能读的类型。 */
+const P1_KINDS = new Set(['md', 'txt', 'code', 'csv'])
+/** 表格上限：超出截断并标 `caps.truncated`。 */
+const TABLE_MAX_ROWS = 5000
+const TABLE_MAX_COLS = 64
+
+/** 文件名 → kind；认不出的扩展名返回空串。 */
+function fileKindOf(name) {
+  const base = String(name === undefined || name === null ? '' : name)
+  const dot = base.lastIndexOf('.')
+  if (dot <= 0 || dot === base.length - 1) return ''
+  const ext = base.slice(dot + 1).toLowerCase()
+  return Object.prototype.hasOwnProperty.call(FILE_KIND_BY_EXT, ext) ? FILE_KIND_BY_EXT[ext] : ''
+}
+
+/**
+ * RFC 4180 风格的 CSV 解析：`"` 包裹、`""` 转义、字段内换行、CRLF/LF/CR 都认；去 UTF-8 BOM。
+ * 不用 split(',')：引号里的逗号和换行会把表拆坏。
+ * 超过 maxRows 行或 maxCols 列就截断，返回 `{ rows, truncated }`。
+ */
+function parseCsv(text, maxRows, maxCols) {
+  const src = String(text === undefined || text === null ? '' : text).replace(/^﻿/u, '')
+  const rowLimit = Number.isFinite(maxRows) && maxRows > 0 ? Math.floor(maxRows) : TABLE_MAX_ROWS
+  const colLimit = Number.isFinite(maxCols) && maxCols > 0 ? Math.floor(maxCols) : TABLE_MAX_COLS
+  const rows = []
+  let truncated = false
+  let row = []
+  let field = ''
+  let quoted = false
+  let i = 0
+  const pushField = () => {
+    if (row.length < colLimit) row.push(field)
+    else truncated = true
+    field = ''
+  }
+  const pushRow = () => {
+    pushField()
+    rows.push(row)
+    row = []
+  }
+  while (i < src.length) {
+    const ch = src[i]
+    if (quoted) {
+      if (ch === '"') {
+        if (src[i + 1] === '"') { field += '"'; i += 2; continue }
+        quoted = false
+        i += 1
+        continue
+      }
+      field += ch
+      i += 1
+      continue
+    }
+    if (ch === '"' && field === '') { quoted = true; i += 1; continue }
+    if (ch === ',') { pushField(); i += 1; continue }
+    if (ch === '\r' || ch === '\n') {
+      pushRow()
+      if (ch === '\r' && src[i + 1] === '\n') i += 1
+      i += 1
+      if (rows.length >= rowLimit) {
+        if (i < src.length) truncated = true
+        return { rows, truncated }
+      }
+      continue
+    }
+    field += ch
+    i += 1
+  }
+  /* 末行没有换行符：只要这一行有内容就收下（文件末尾的单个换行不额外多出一个空行）。 */
+  if (field !== '' || row.length > 0 || quoted) pushRow()
+  return { rows, truncated }
+}
+
+/**
+ * 路径守卫（纯函数，不碰磁盘）：把客户端给的 `path` 解析成磁盘全路径，并保证它仍在
+ * `<root>/<本会话尾巴>/` 内。
+ * - 不含分隔符的单纯文件名 → 相对本会话目录；
+ * - 含分隔符的相对路径 → 相对 annotate-docs 根（形如 `<尾巴>/x.csv`）；
+ * - 绝对路径原样解析。
+ * 解析到根目录之外或别的会话目录 → `{ ok:false, status:409, reason:'cross-session' }`。
+ */
+function resolveSessionFile(root, sessionId, rawPath) {
+  const raw = String(rawPath === undefined || rawPath === null ? '' : rawPath).trim()
+  if (raw === '' || raw.indexOf('\u0000') >= 0) return { ok: false, status: 400, reason: 'no-path' }
+  const tail = sessionTailOf(sessionId)
+  const unified = raw.replace(/\\/gu, '/')
+  const absolute = path.isAbsolute(raw) || /^[a-zA-Z]:\//u.test(unified)
+  const base = absolute ? '' : (unified.indexOf('/') < 0 ? path.join(root, tail) : root)
+  const full = absolute ? path.resolve(raw) : path.resolve(base, unified)
+  const rel = path.relative(path.resolve(root), full)
+  if (rel === '' || rel.startsWith('..') || path.isAbsolute(rel)) {
+    return { ok: false, status: 409, reason: 'cross-session' }
+  }
+  const parts = rel.split(/[\\/]+/u)
+  if (parts.length < 2 || parts[0] !== tail) return { ok: false, status: 409, reason: 'cross-session' }
+  const name = parts[parts.length - 1]
+  if (name === META_NAME) return { ok: false, status: 404, reason: 'missing' }
+  return { ok: true, full, rel: parts.join('/'), tail, name }
+}
+
+/** 每种 kind 的能力位：P1 只有 md 能写回 / 导出。 */
+function capsOf(kind) {
+  if (kind === 'md') return { read: true, writeBack: true, export: true }
+  return { read: true, writeBack: false, export: false }
+}
+
+/**
+ * 读一个会话文件，组出 `/annotate-file` 的响应体与状态码（拆出来便于离线测）。
+ * @returns {Promise<{status: number, body: object}>}
+ */
+async function readSessionFile(root, sessionId, rawPath) {
+  const resolved = resolveSessionFile(root, sessionId, rawPath)
+  if (resolved.ok !== true) return { status: resolved.status, body: { ok: false, reason: resolved.reason } }
+  let stat = null
+  try {
+    stat = await fs.stat(resolved.full)
+  } catch (error) {
+    return { status: 404, body: { ok: false, reason: 'missing' } }
+  }
+  if (stat.isFile() !== true) return { status: 404, body: { ok: false, reason: 'missing' } }
+  const kind = fileKindOf(resolved.name)
+  const head = { kind, mtime: stat.mtimeMs, bytes: stat.size, title: safeSegment(resolved.name, 120) || resolved.name, file: resolved.name }
+  if (P1_KINDS.has(kind) !== true) {
+    return { status: 415, body: { ok: false, reason: 'unsupported', ...head, caps: { read: false, writeBack: false, export: false } } }
+  }
+  if (stat.size > MAX_DOC_BYTES) return { status: 413, body: { ok: false, reason: 'too-large', ...head } }
+  const text = await fs.readFile(resolved.full, 'utf8')
+  if (kind === 'csv') {
+    const parsed = parseCsv(text, TABLE_MAX_ROWS, TABLE_MAX_COLS)
+    return {
+      status: 200,
+      body: { ok: true, ...head, model: { type: 'table', rows: parsed.rows }, caps: { ...capsOf(kind), truncated: parsed.truncated } },
+    }
+  }
+  return { status: 200, body: { ok: true, ...head, text, caps: capsOf(kind) } }
+}
+
+/**
+ * 注册 `/annotate-file`（0.115 新增，不动 `/annotate-doc/*`）。
+ *
+ * GET /annotate-file?sid=&path=      → 200 { ok, kind, mtime, bytes, title, text?, model?, caps }
+ *                                     → 404 missing / 409 cross-session / 415 unsupported / 413 too-large
+ * GET /annotate-file/list?sid=       → 本会话目录里的非 .md 文件 { ok, items:[{ file, kind, supported, bytes, mtime }] }
+ */
+function registerFileRoute(ctx, config) {
+  ctx.inject(['webServer'], (webCtx) => {
+    webCtx.effect(() => webCtx.webServer.register({
+      kind: 'prefix',
+      path: '/annotate-file',
+      handler: async (req, res) => {
+        const parsed = new URL(String(req.url === undefined ? '/' : req.url), 'http://dsh.local')
+        const root = docsRoot(config)
+        try {
+          if (req.method !== 'GET') {
+            sendJson(res, 405, { ok: false, reason: 'method-not-allowed' })
+            return
+          }
+          const sid = parsed.searchParams.get('sid') || ''
+          if (sid === '') {
+            sendJson(res, 400, { ok: false, reason: 'no-sid' })
+            return
+          }
+          if (parsed.pathname === '/annotate-file/list') {
+            sendJson(res, 200, { ok: true, sid, items: await listSessionDocs(root, sid, { others: true }) })
+            return
+          }
+          if (parsed.pathname === '/annotate-file' || parsed.pathname === '/annotate-file/') {
+            const out = await readSessionFile(root, sid, parsed.searchParams.get('path') || '')
+            if (out.status === 409) {
+              try {
+                ctx.logger?.warn?.(`[dsh-annotate] 拒绝跨会话读文件：sid=${sessionTailOf(sid)}`)
+              } catch (logError) { /* 忽略 */ }
+            }
+            sendJson(res, out.status, out.body)
+            return
+          }
+          sendJson(res, 404, { ok: false, reason: 'not-found' })
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+          try {
+            ctx.logger?.warn?.(`[dsh-annotate] 读文件失败：${message}`)
+          } catch (logError) { /* 日志失败不影响返回 */ }
+          sendJson(res, 500, { ok: false, reason: 'error', message })
+        }
+      },
+    }), 'annotate: 通用文件读取路由')
+  })
 }
 
 /** 列所有会话文件夹；顺带标出「DSH 里已经找不到这个会话」的孤立目录。 */
