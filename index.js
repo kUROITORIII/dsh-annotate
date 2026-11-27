@@ -1508,9 +1508,27 @@ function registerDocRoute(ctx, config) {
               sendJson(res, 400, { ok: false, reason: 'no-sid' })
               return
             }
+            /* 0.121.1：**不再直接删目录**。以前这里 fs.rm 整个会话文档目录，
+               一次误调用就把十几份文档永久删掉（2026-11-28 真实事故：我拿 tidy 探活，
+               把会话 059068b6 的 18 份文档整目录删了）。
+               现在只做「挪进回收目录」，并且要求显式确认串。 */
             const dir = path.join(root, sessionTailOf(sid))
-            await fs.rm(dir, { recursive: true, force: true })
-            sendJson(res, 200, { ok: true, sid, dir })
+            const confirm = payload !== null && typeof payload === 'object' && typeof payload.confirm === 'string' ? payload.confirm : ''
+            if (confirm !== 'MOVE-TO-TRASH') {
+              sendJson(res, 400, { ok: false, reason: 'need-confirm', hint: '需要 confirm: "MOVE-TO-TRASH"' })
+              return
+            }
+            const trash = path.join(root, '_trash', sessionTailOf(sid) + '-' + String(Date.now()))
+            let moved = false
+            try {
+              await fs.access(dir)
+              await fs.mkdir(path.dirname(trash), { recursive: true })
+              await fs.rename(dir, trash)
+              moved = true
+            } catch (error) {
+              moved = false
+            }
+            sendJson(res, 200, { ok: true, sid, dir, moved, trash: moved ? trash : '' })
             return
           }
 

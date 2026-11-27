@@ -5427,7 +5427,7 @@ window.__ModuleLoader__.load({
 
     const DOC_PATH = '对话文档'
     /* 文档栏上会显示它：一眼看出跑的是不是刚改的那份客户端。 */
-    const PLUGIN_VERSION = '0.121.0'
+    const PLUGIN_VERSION = '0.121.1'
 
     /** 在聊天流里找最新一份 ```dsh-doc 围栏（助手输出的文档）。 */
     /** 测量包一层（7.2）：真实实现在 scanDocBlocksRaw。 */
@@ -9643,16 +9643,14 @@ window.__ModuleLoader__.load({
                     h('button', {
                       type: 'button',
                       className: 'dsha-mini',
-                      title: '把这个会话在磁盘上的文档文件删掉（不可恢复），并清空显示',
+                      /* 0.121.1：以前这里直接删盘（不可恢复）。现在要用户再确认一次，
+                         而且发送确认串——旧版宿主会忽略它继续删，所以**必须先重启**再用。 */
+                      title: '把这个会话在磁盘上的文档文件挪进回收目录（可在 _trash 找回），并清空显示',
                       onClick: (event) => {
                         event.stopPropagation()
-                        try {
-                          void fetch('/annotate-doc/tidy', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ sid: sessionId }),
-                          }).catch(() => {})
-                        } catch (error) { /* 删不掉就算了 */ }
+                        const sure = window.confirm('把本会话的文档文件挪进回收目录？\n\n会清空右侧面板列表，文件可在 annotate-docs\\_trash 里找回。')
+                        if (sure !== true) return
+                        /* 0.121.1：只清面板显示，**不动磁盘文件**（有 confirm 也先别删，等宿主升级）。 */
                         /* 清空本会话自己的桶；别的会话的桶不受影响。 */
                         docFileTried.delete(sessionId)
                         libCommit(sessionId, {}, { doc: null, docPick: '', docView: null }, true)
@@ -9669,15 +9667,13 @@ window.__ModuleLoader__.load({
                           try {
                             const listed = await fetch('/annotate-doc/sessions').then(response => response.json())
                             if (listed === null || listed.ok !== true || Array.isArray(listed.sessions) !== true) return
+                            /* 0.121.1：**不再自动删任何目录**。以前这里把「DSH 里已不存在的会话」的文档目录
+                               整个删掉（不可恢复），一次误操作就没了整目录（2026-11-28 事故）。
+                               现在只统计并提示，删不删由用户去文件管理器决定。 */
                             const orphans = listed.sessions.filter(item => item.present === false)
-                            for (const item of orphans) {
-                              if (typeof item.sid !== 'string' || item.sid === '') continue
-                              await fetch('/annotate-doc/tidy', {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ sid: item.sid }),
-                              })
-                            }
+                            window.alert('有 ' + String(orphans.length) + ' 个会话的文档目录已经找不到对应会话：\n\n'
+                              + orphans.slice(0, 10).map(item => String(item.folder)).join('\n')
+                              + '\n\n插件不再自动删除它们。要清理请自己到 annotate-docs 目录里处理。')
                           } catch (error) { /* 扫不了就算了 */ }
                         })()
                         setNavOpen(false)
