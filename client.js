@@ -1175,6 +1175,41 @@ window.__ModuleLoader__.load({
       }
     }
 
+    /**
+     * 清掉本地文档库里「指向的文件已经不在磁盘上」的条目。
+     * 背景：文档副本删掉后，localStorage 里的库条目还在，面板会继续显示它（2026-11-27）。
+     * 每个会话每次启动只跑一次。 */
+    async function purgeMissingDocs(sessionId, force) {
+      if (typeof sessionId !== 'string' || sessionId === '') return
+      if (force !== true && runtime.docPurged[sessionId] === true) return
+      runtime.docPurged[sessionId] = true
+      let items = []
+      try {
+        const res = await fetch('/annotate-doc/list?sid=' + encodeURIComponent(sessionId)).then(r => r.json())
+        if (res !== null && res.ok === true && Array.isArray(res.items)) items = res.items
+      } catch (error) {
+        return
+      }
+      const tail = 'file:' + sessionTail(sessionId) + '/'
+      const present = new Set(items.map(it => String(it.file === undefined ? '' : it.file).replace(/\.md$/iu, '')))
+      const lib = state.docLibrary === undefined || state.docLibrary === null ? {} : state.docLibrary
+      const next = {}
+      let changed = false
+      for (const [key, entry] of Object.entries(lib)) {
+        if (String(key).indexOf(tail) === 0) {
+          const name = String(key).slice(tail.length).replace(/\.md$/iu, '')
+          if (present.has(name) !== true) { changed = true; continue }
+        }
+        next[key] = entry
+      }
+      if (changed) commit({ docLibrary: next }, true)
+      const cur = state.doc
+      if (cur !== null && cur !== undefined && typeof cur.key === 'string' && cur.key.indexOf(tail) === 0) {
+        const name = String(cur.key).slice(tail.length).replace(/\.md$/iu, '')
+        if (present.has(name) !== true) commit({ doc: null, docPick: '', docView: null })
+      }
+    }
+
     /** 文件被工具改过就重读：每 3 秒看一次 mtime，比上次新才拉正文。 */
     let docFileMtime = 0
     let docFileCheckedAt = 0
@@ -2009,7 +2044,7 @@ window.__ModuleLoader__.load({
     /** 根作用域的侧栏拿不到 inputActions，由会话作用域的按钮把它挂过来。
      *  `target` 是文件选区的唯一接缝：谁采到「文件 + 行号 + 原文」谁就往这里写，
      *  AnnotateSurface 消费后立刻清空，绝不跨批次残留。 */
-    const runtime = { actions: null, target: null, targetAt: 0, trace: '', ctx: null, replyScan: { refs: [], total: 0 }, replySeen: {}, lostCache: new Map(), autoOpen: {}, settingsForm: null, dockDispose: null, dockOn: null }
+    const runtime = { actions: null, target: null, targetAt: 0, trace: '', ctx: null, replyScan: { refs: [], total: 0 }, replySeen: {}, lostCache: new Map(), autoOpen: {}, settingsForm: null, dockDispose: null, dockOn: null, docPurged: {} }
 
     function freshTarget() {
       if (runtime.target === null) return null
@@ -4187,7 +4222,7 @@ window.__ModuleLoader__.load({
 
     const DOC_PATH = '对话文档'
     /* 文档栏上会显示它：一眼看出跑的是不是刚改的那份客户端。 */
-    const PLUGIN_VERSION = '0.110.4'
+    const PLUGIN_VERSION = '0.110.5'
 
     /** 在聊天流里找最新一份 ```dsh-doc 围栏（助手输出的文档）。 */
     function scanDocBlocks() {
@@ -6545,6 +6580,8 @@ window.__ModuleLoader__.load({
           if (runtime.lastSid !== undefined && runtime.lastSid !== null
             && runtime.lastSid !== sessionId && typeof runtime.lastSid === 'string') return
           runtime.docWhy = ''
+          /* 磁盘上已经不存在的文档，不要把本地库里的残影继续显示出来。 */
+          void purgeMissingDocs(sessionId)
           /* 面板里这份如果属于别的会话（按文件目录判），先放下：本会话的文档要么从聊天进来，
              要么从文档库 / 磁盘恢复。否则就会出现「这个会话的文档在别的会话窗口里」。 */
           if (state.doc !== null && state.doc !== undefined) {
