@@ -1424,9 +1424,11 @@ window.__ModuleLoader__.load({
     }
 
     /** 从磁盘读回本会话最新那份；找不到就返回 null。 */
-    async function readDocFile(sessionId) {
+    async function readDocFile(sessionId, wantedFile) {
       try {
-        const one = await fetch('/annotate-doc/latest?sid=' + encodeURIComponent(sessionId)).then(response => response.json())
+        const asked = typeof wantedFile === 'string' && wantedFile !== ''
+          ? '&file=' + encodeURIComponent(wantedFile) : ''
+        const one = await fetch('/annotate-doc/latest?sid=' + encodeURIComponent(sessionId) + asked).then(response => response.json())
         if (one === null || one.ok !== true || typeof one.text !== 'string' || one.text === '') return null
         const blocks = parseMarkdownDoc(one.text)
         return {
@@ -1446,6 +1448,89 @@ window.__ModuleLoader__.load({
       } catch (error) {
         return null
       }
+    }
+
+    /**
+     * 把磁盘上「本会话目录里已有、但库里还没有」的文档并进文档库。
+     * 为什么需要：工具（doc_append / doc_replace）直接写盘，不带聊天块，
+     * 而库只从聊天扫描更新 —— 于是刚写好的文档在面板里看不到（2026-11-27 用户报）。
+     * 规则：每个会话首次同步只登记、不切画面（避免启动时抢走正在看的那份）；
+     * 之后新出现的文件才自动切过去（表示「刚给你写了一份」）。 */
+    /**
+     * 纯函数：磁盘清单里哪些条目本会话库里还没有（按会话尾巴过滤 + 去掉 .md 后缀）。
+     * items: [{ file, title, mtime }]；bucket: 本会话文档库。
+     * 返回 [{ key, file, title, at }]。 */
+    function freshDiskDocs(bucket, items, tail, now) {
+      const out = []
+      const mine = bucket === null || bucket === undefined ? {} : bucket
+      if (Array.isArray(items) !== true) return out
+      for (const item of items) {
+        const file = String(item === null || item === undefined || item.file === undefined ? '' : item.file)
+        if (file.endsWith('.md') !== true) continue
+        const key = tail + file.replace(/\.md$/iu, '')
+        if (mine[key] !== undefined) continue
+        out.push({
+          key,
+          file,
+          title: typeof item.title === 'string' && item.title !== '' ? item.title : file,
+          at: Number(item.mtime) || Number(now) || 0,
+        })
+      }
+      return out
+    }
+
+    async function syncDocsFromDisk(sessionId) {
+      if (typeof sessionId !== 'string' || sessionId === '') return
+      const now = Date.now()
+      if (runtime.diskSyncAt[sessionId] !== undefined && now - runtime.diskSyncAt[sessionId] < 4000) return
+      runtime.diskSyncAt[sessionId] = now
+      let listed = null
+      try {
+        listed = await fetch('/annotate-doc/list?sid=' + encodeURIComponent(sessionId)).then(response => response.json())
+      } catch (error) {
+        return
+      }
+      if (listed === null || listed.ok !== true || Array.isArray(listed.items) !== true) return
+      const tail = 'file:' + sessionTail(sessionId) + '/'
+      const bucket = libOf(sessionId)
+      const firstSync = runtime.diskKnown[sessionId] !== true
+      runtime.diskKnown[sessionId] = true
+      const fresh = freshDiskDocs(bucket, listed.items, tail, now)
+      if (fresh.length === 0) return
+      const nextBucket = { ...bucket }
+      const loaded = []
+      for (const one of fresh) {
+        let text = ''
+        try {
+          const got = await fetch('/annotate-doc/latest?sid=' + encodeURIComponent(sessionId) + '&file=' + encodeURIComponent(one.file)).then(response => response.json())
+          if (got !== null && got.ok === true && typeof got.text === 'string') text = got.text
+        } catch (error) {
+          text = ''
+        }
+        if (text === '') continue
+        nextBucket[one.key] = { title: one.title, text, at: one.at, sid: sessionId, trusted: true }
+        loaded.push({ ...one, text })
+      }
+      if (loaded.length === 0) return
+      libCommit(sessionId, nextBucket)
+      if (firstSync === true) return
+      const newest = loaded.slice().sort((a, b) => b.at - a.at)[0]
+      const current = state.doc
+      if (current !== null && current !== undefined && current.local === true) return
+      const blocks = parseMarkdownDoc(newest.text)
+      runtime.docWhy = 'disk-new'
+      putDoc({
+        id: 'main',
+        sid: sessionId,
+        key: newest.key,
+        fileName: newest.file,
+        title: newest.title,
+        source: newest.text,
+        blocks,
+        baseCount: blocks.length,
+        local: false,
+        appends: [],
+      })
     }
 
     /**
@@ -2341,7 +2426,7 @@ window.__ModuleLoader__.load({
     /** 根作用域的侧栏拿不到 inputActions，由会话作用域的按钮把它挂过来。
      *  `target` 是文件选区的唯一接缝：谁采到「文件 + 行号 + 原文」谁就往这里写，
      *  AnnotateSurface 消费后立刻清空，绝不跨批次残留。 */
-    const runtime = { actions: null, target: null, targetAt: 0, trace: '', ctx: null, replyScan: { refs: [], total: 0 }, replySeen: {}, lostCache: new Map(), autoOpen: {}, settingsForm: null, dockDispose: null, dockOn: null, docPurged: {} }
+    const runtime = { actions: null, target: null, targetAt: 0, trace: '', ctx: null, replyScan: { refs: [], total: 0 }, replySeen: {}, lostCache: new Map(), autoOpen: {}, settingsForm: null, dockDispose: null, dockOn: null, docPurged: {}, diskSyncAt: {}, diskKnown: {} }
 
     function freshTarget() {
       if (runtime.target === null) return null
@@ -4539,7 +4624,7 @@ window.__ModuleLoader__.load({
 
     const DOC_PATH = '对话文档'
     /* 文档栏上会显示它：一眼看出跑的是不是刚改的那份客户端。 */
-    const PLUGIN_VERSION = '0.112.4'
+    const PLUGIN_VERSION = '0.112.5'
 
     /** 在聊天流里找最新一份 ```dsh-doc 围栏（助手输出的文档）。 */
     function scanDocBlocks() {
@@ -6939,6 +7024,8 @@ window.__ModuleLoader__.load({
           sendDocDiag(sessionId)
           /* 磁盘上已经不存在的文档，不要把本地库里的残影继续显示出来。 */
           void purgeMissingDocs(sessionId)
+          /* 工具直接写盘的新文档：并进库；不是首次同步的话顺手切过去。 */
+          void syncDocsFromDisk(sessionId)
           /* 面板里这份如果属于别的会话（按文件目录判），先放下：本会话的文档要么从聊天进来，
              要么从文档库 / 磁盘恢复。否则就会出现「这个会话的文档在别的会话窗口里」。 */
           if (state.doc !== null && state.doc !== undefined) {
@@ -8622,7 +8709,7 @@ window.__ModuleLoader__.load({
       /** 只读测试出口：给离线脚本验证拼装逻辑用，运行时没人调它。 */
       __test: {
         buildPayload, planBatches, addAnnotation, clipQuote, normalizePath,
-        migrateItem, readState, resolveTarget, decideKind, parseReactions, demoteChatTrust,
+        migrateItem, readState, resolveTarget, decideKind, parseReactions, demoteChatTrust, freshDiskDocs,
         parseReactionRows, reactionRows, reactionText, mergeReactionText,
         locateQuote, bestCommonSpan, subsequenceStats, expandToSentence, fuzzyQuoteInBlock, clipToBlockEnd, menuSkipSelector: MENU_SKIP_SELECTOR,
         sanitizeSvg, svgSizeOf, svgLabelOf, safeFileName, parseMarkdownDoc, docToMarkdown,
