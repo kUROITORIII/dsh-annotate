@@ -569,7 +569,7 @@ window.__ModuleLoader__.load({
     const TARGET_TTL = 60000
 
     function emptyState() {
-      return { schema: SCHEMA, batchSeq: 0, sessions: {}, open: false, active: null, undo: null, surface: null, debug: '', ui: null, collapsed: {}, docOpen: false, docPending: null, docToolbar: null, doc: null, docEditing: false, docThread: null, docThreadBox: null, docWide: false, docWideBox: null, docFloatBox: null, docDrawer: false, docDrawerW: 340, docPick: '', docView: null, docFont: 15, docFontLocal: false, docs: {}, docLibraryLegacy: null, docMigration: null, docDemote: true, docDemoted: 0, sentTail: '', sentTails: [], picked: {}, reanchorId: '', reanchorHint: '', autoDoc: true, autoDocLocal: false, hideDocBlocks: true, docSeen: '', onlyQueued: false, onlyLost: false, keepReplyWindow: 4, docFind: '', docFindAt: 0, docFindOpen: false, reactions: '', wideRightClick: true, dockDocTab: false, docDetached: false }
+      return { schema: SCHEMA, batchSeq: 0, sessions: {}, open: false, active: null, undo: null, surface: null, debug: '', ui: null, collapsed: {}, docOpen: false, docPending: null, docToolbar: null, doc: null, docEditing: false, docThread: null, docThreadBox: null, docWide: false, docWideBox: null, docFloatBox: null, docDrawer: false, docDrawerW: 340, docPick: '', docView: null, docFont: 15, docFontLocal: false, docSid: '', docs: {}, docLibraryLegacy: null, docMigration: null, docDemote: true, docDemoted: 0, sentTail: '', sentTails: [], picked: {}, reanchorId: '', reanchorHint: '', autoDoc: true, autoDocLocal: false, hideDocBlocks: true, docSeen: '', onlyQueued: false, onlyLost: false, keepReplyWindow: 4, docFind: '', docFindAt: 0, docFindOpen: false, reactions: '', wideRightClick: true, dockDocTab: false, docDetached: false }
     }
 
     /** 聊天引文可以压空白；文件引文必须逐字保留换行，否则模型定位不到原文。 */
@@ -2809,8 +2809,20 @@ window.__ModuleLoader__.load({
         }),
       }, done ? '已复制' : '复制')
     }
-    function DocButton() {
+    function DocButton(props) {
       const store = useStore()
+      /* 侧栏「文档」页签是常驻的：它拿到的 scope.sessionId 是**注册那一刻**的会话，
+         切会话不会变，于是页签一直显示老会话的文档（2026-11-27 现场：显示 059068b6 的「技能三层机制」）。
+         顶栏按钮挂在每个会话头部，切会话必重渲染 —— 让它把当前会话报上来，页签按这个跟随。 */
+      const liveSid = props !== null && props !== undefined && props.scope !== null && props.scope !== undefined
+        && typeof props.scope.sessionId === 'string'
+        ? props.scope.sessionId
+        : ''
+      React.useEffect(() => {
+        if (liveSid === '') return
+        if (state.docSid === liveSid) return
+        commit({ docSid: liveSid })
+      }, [liveSid])
       /* 停靠模式下文档在右侧栏里，浮层不渲染 —— 这里把「看得见」按停靠算，
          否则按钮会一直亮提示点、tooltip 还写着「收起」。 */
       const docked = store.dockDocTab === true && store.docDetached !== true
@@ -4507,7 +4519,7 @@ window.__ModuleLoader__.load({
 
     const DOC_PATH = '对话文档'
     /* 文档栏上会显示它：一眼看出跑的是不是刚改的那份客户端。 */
-    const PLUGIN_VERSION = '0.112.1'
+    const PLUGIN_VERSION = '0.112.2'
 
     /** 在聊天流里找最新一份 ```dsh-doc 围栏（助手输出的文档）。 */
     function scanDocBlocks() {
@@ -6398,11 +6410,16 @@ window.__ModuleLoader__.load({
         && typeof props.scope.sessionId === 'string'
         ? props.scope.sessionId
         : ''
-      const sessionId = scopeId !== ''
-        ? scopeId
-        : (props !== null && props !== undefined && typeof props.sessionId === 'string' && props.sessionId !== ''
-          ? props.sessionId
-          : store.active)
+      /* store.docSid = 顶栏「文档」按钮报上来的**当前会话**（切会话就会更新），比页签自己的
+         scope.sessionId 可靠：页签是常驻的，scope 停在注册那一刻（2026-11-27）。 */
+      const liveSid = typeof store.docSid === 'string' ? store.docSid : ''
+      const sessionId = liveSid !== ''
+        ? liveSid
+        : (scopeId !== ''
+          ? scopeId
+          : (props !== null && props !== undefined && typeof props.sessionId === 'string' && props.sessionId !== ''
+            ? props.sessionId
+            : store.active))
       /* 文档按会话隔离：有条目 sid 的只给它自己那个会话看；没有 sid 的老数据，
          第一次在某个会话里显示时就认领给那个会话（只认领一次，别处不再串）。 */
       /* 归属按「文件目录的会话尾巴」判，不只信 sid —— sid 被双实例时期写串过，
