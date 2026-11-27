@@ -518,6 +518,12 @@ function registerDocRoute(ctx, config) {
             const picked = wanted !== '' && wanted.indexOf('/') < 0 && wanted.indexOf('\\') < 0 && wanted.indexOf('..') < 0
               ? items.find(item => item.file === wanted)
               : undefined
+            /* 0.113.4：**指定了文件却找不到，必须报错**，不能退回最新一份。
+               退回会让调用方把「B 的正文」存进「A 的键」，面板从此显示错内容（2026-11-27 实测）。 */
+            if (wanted !== '' && picked === undefined) {
+              sendJson(res, 404, { ok: false, reason: 'no-such-file', file: wanted })
+              return
+            }
             const chosen = picked === undefined ? items[0] : picked
             const full = path.join(root, sessionTailOf(sid), chosen.file)
             const text = await fs.readFile(full, 'utf8')

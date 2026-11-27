@@ -1694,6 +1694,23 @@ window.__ModuleLoader__.load({
       })
     }
 
+    /** UTF-8 字节数（浏览器与 Node 的行为一致）。 */
+    function textBytes(text) {
+      if (typeof text !== 'string' || text === '') return 0
+      try {
+        return new TextEncoder().encode(text).length
+      } catch (error) {
+        return text.length
+      }
+    }
+
+    /** 库里的正文和磁盘上的字节数对不上 → 说明当初取错了文件，需要重取。 */
+    function needsTextRefresh(text, bytes) {
+      const size = Number(bytes)
+      if (!Number.isFinite(size) || size <= 0) return false
+      return textBytes(typeof text === 'string' ? text : '') !== size
+    }
+
     function freshDiskDocs(bucket, items, tail, now) {
       const out = []
       const mine = bucket === null || bucket === undefined ? {} : bucket
@@ -1771,6 +1788,29 @@ window.__ModuleLoader__.load({
       const bucket = libOf(sessionId)
       const firstSync = runtime.diskKnown[sessionId] !== true
       runtime.diskKnown[sessionId] = true
+      /* 0.113.4：已有条目的正文可能和磁盘对不上（旧版本取错文件留下的）。
+         按 UTF-8 字节数比对，对不上就重取一次；服务器现在会 404 而不是退回别的文件。 */
+      const repaired = { ...bucket }
+      let repairCount = 0
+      for (const item of (Array.isArray(listed.items) ? listed.items : [])) {
+        const file = String(item === null || item === undefined || item.file === undefined ? '' : item.file)
+        if (file.endsWith('.md') !== true) continue
+        const key = tail + file
+        const entry = repaired[key]
+        if (entry === undefined || entry === null) continue
+        if (needsTextRefresh(entry.text, item.bytes) !== true) continue
+        try {
+          const got = await fetch('/annotate-doc/latest?sid=' + encodeURIComponent(sessionId) + '&file=' + encodeURIComponent(file)).then(response => response.json())
+          if (got !== null && got.ok === true && typeof got.text === 'string' && got.text !== '') {
+            repaired[key] = { ...entry, text: got.text, at: Number(item.mtime) || entry.at, title: String(got.title || entry.title) }
+            repairCount += 1
+          }
+        } catch (error) { /* 下一轮再试 */ }
+      }
+      if (repairCount > 0) {
+        libCommit(sessionId, repaired)
+        logLine('文档修复 [' + sessionTail(sessionId) + '] 重取正文 ' + String(repairCount) + ' 份（字节数和磁盘对不上）')
+      }
       if (firstSync === true) {
         try { await switchToNewestOnDisk(sessionId) } catch (error) { /* 下一轮再试 */ }
       }
@@ -4922,7 +4962,7 @@ window.__ModuleLoader__.load({
 
     const DOC_PATH = '对话文档'
     /* 文档栏上会显示它：一眼看出跑的是不是刚改的那份客户端。 */
-    const PLUGIN_VERSION = '0.113.3'
+    const PLUGIN_VERSION = '0.113.4'
 
     /** 在聊天流里找最新一份 ```dsh-doc 围栏（助手输出的文档）。 */
     /** 测量包一层（7.2）：真实实现在 scanDocBlocksRaw。 */
@@ -9110,7 +9150,7 @@ window.__ModuleLoader__.load({
       /** 只读测试出口：给离线脚本验证拼装逻辑用，运行时没人调它。 */
       __test: {
         buildPayload, planBatches, addAnnotation, clipQuote, normalizePath,
-        migrateItem, readState, resolveTarget, decideKind, parseReactions, demoteChatTrust, freshDiskDocs, healDiskKeys, dedupeDocList,
+        migrateItem, readState, resolveTarget, decideKind, parseReactions, demoteChatTrust, freshDiskDocs, healDiskKeys, dedupeDocList, textBytes, needsTextRefresh,
         parseReactionRows, reactionRows, reactionText, mergeReactionText,
         locateQuote, bestCommonSpan, subsequenceStats, expandToSentence, fuzzyQuoteInBlock, clipToBlockEnd, menuSkipSelector: MENU_SKIP_SELECTOR,
         sanitizeSvg, svgSizeOf, svgLabelOf, safeFileName, parseMarkdownDoc, docToMarkdown,
